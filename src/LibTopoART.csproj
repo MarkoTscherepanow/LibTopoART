@@ -1,0 +1,51 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFrameworks>netstandard2.1;net472;net10.0</TargetFrameworks>
+    <PackageId>LibTopoART</PackageId>
+    <Authors>Marko Tscherepanow</Authors>
+    <PackageProjectUrl>https://www.LibTopoART.eu</PackageProjectUrl>
+    <PackageIcon>logo.png</PackageIcon>
+    <PackageReadmeFile>readme.md</PackageReadmeFile>
+    <PackageLicenseExpression>MIT</PackageLicenseExpression>
+    <PackageReleaseNotes>Version 1.0.0 contains full implementations of the basic TopoART networks.</PackageReleaseNotes>
+    <Description>LibTopoART provides C# implementations of several TopoART neural networks which are suited to problems such as online-learning, lifelong learning from data streams, as well as incremental learning and prediction from non-stationary data, noisy data, imbalanced data, and incomplete data.</Description>
+    <Copyright>© Marko Tscherepanow. All rights reserved.</Copyright>
+    <SignAssembly>true</SignAssembly>
+    <AssemblyOriginatorKeyFile>LibTopoART.snk</AssemblyOriginatorKeyFile>
+    <PackageTags>neural network;adaptive resonance theory;lifelong;incremental;machine learning;ART;TopoART</PackageTags>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    <DebugType>embedded</DebugType>
+    <Nullable>Enable</Nullable>
+    <LangVersion>latest</LangVersion>
+    <ReleaseVersion>1.0.0</ReleaseVersion>
+    <PackageVersion>$(ReleaseVersion)</PackageVersion>
+    <Version>$(ReleaseVersion)</Version>
+    <EnablePackageValidation>true</EnablePackageValidation>
+    <EmbedUntrackedSources>true</EmbedUntrackedSources>
+    <Deterministic>true</Deterministic>
+    <!-- <ContinuousIntegrationBuild>true</ContinuousIntegrationBuild> -->
+  </PropertyGroup>
+
+  <PropertyGroup Condition=" '$(Configuration)' == 'Debug' ">
+    <CheckForOverflowUnderflow>true</CheckForOverflowUnderflow>
+    <DocumentationFile>bin\Debug\LibTopoART.xml</DocumentationFile>
+  </PropertyGroup>
+
+  <PropertyGroup Condition=" '$(Configuration)' == 'Release' ">
+    <DebugSymbols>true</DebugSymbols>
+    <DocumentationFile>bin\Release\LibTopoART.xml</DocumentationFile>
+  </PropertyGroup>
+
+  <ItemGroup Condition="'$(TargetFramework)' == 'net472'">
+    <PackageReference Include="System.Numerics.Vectors" Version="[4.6.0]" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <None Include="logo.png" Pack="true" PackagePath="$(PackageIcon)">
+      <Link>logo.png</Link>
+    </None>
+    <None Include="readme.md" Pack="true" PackagePath="\"/>
+  </ItemGroup>
+  
+</Project>
