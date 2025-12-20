@@ -26,4 +26,4 @@ jobs:
     - uses: actions/upload-artifact@v4
       with:
         name: NuGetPackage
-        path: /home/runner/work/LibTopoART/LibTopoART/src/bin/Release/LibTopoART.1.*.?.nupkg
+        path: /Users/runner/work/LibTopoART/LibTopoART/src/bin/Release/LibTopoART.1.*.?.nupkg
