@@ -12,10 +12,10 @@ jobs:
     runs-on: macos-latest
 
     steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@v7
 
     - name: Setup .NET
-      uses: actions/setup-dotnet@v4
+      uses: actions/setup-dotnet@v6
       with:
         dotnet-version: 10.0.x
 
@@ -23,7 +23,7 @@ jobs:
       working-directory: ./src
       run: dotnet pack --configuration Release -p:EmbedUntrackedSources=true -p:ContinuousIntegrationBuild=true -p:PublishRepositoryUrl=true -p:ReleaseBuild=true LibTopoART.csproj
 
-    - uses: actions/upload-artifact@v4
+    - uses: actions/upload-artifact@v7
       with:
         name: NuGetPackage
-        path: /Users/runner/work/LibTopoART/LibTopoART/src/bin/Release/LibTopoART.1.*.?.nupkg
+        path: src/bin/Release/LibTopoART.1.*.?.nupkg
