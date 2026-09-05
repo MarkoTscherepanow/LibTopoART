@@ -9,11 +9,16 @@ namespace LibTopoART
 
 //**********************************************************************************************************************
 
-	internal class TopoART_module : 
-		ActivationThreadProvider<decimal, decimal, long, bool>, 
+	internal class TopoART_module :
+		ActivationThreadProvider<decimal, decimal, long, bool>,
 		ITopoART_module<decimal, decimal, long, bool>,
 		IModuleAdaptationStateCheck<decimal>
 	{
+		private const long _serialWorkLimit = 1024;
+
+		// per-node work offset (in input-element equivalents) for the serial/parallel decision
+		private readonly long _serialPerNodeWorkOffset;
+
 		private long _x_F1_len;
 		private decimal[]? _x_F1;
 		private decimal _rho;
@@ -41,8 +46,10 @@ namespace LibTopoART
 		// Do not use!
 		private protected TopoART_module() {}
 
-		public TopoART_module(long inputLen, decimal rho, CreateF2Node<TA_F2_node, decimal, long>? F2_node_create_func)
+		public TopoART_module(long inputLen, decimal rho, CreateF2Node<TA_F2_node, decimal, long>? F2_node_create_func,
+			long serialPerNodeWorkOffset = 0)
 		{
+			_serialPerNodeWorkOffset = serialPerNodeWorkOffset;
 			CreateF2NodeFunction = F2_node_create_func;
 
 			_x_F1_len = inputLen;
@@ -55,14 +62,16 @@ namespace LibTopoART
 			_clusterNum = 0;
 			_learningCycles = 0;
 
-			InitThreads();
+			InitThreads(_serialWorkLimit, _serialPerNodeWorkOffset);
 
 			Common.Message($"Create module (x_F1_len = {_x_F1_len}; rho = {_rho:0.##########})");
 		}
 
 		public TopoART_module(BinaryReader reader, FileFormatVersions fileFormatVersions,
-			CreateF2Node<TA_F2_node, decimal, long>? F2_node_create_func, LoadF2Node<TA_F2_node> F2_node_load_func)
+			CreateF2Node<TA_F2_node, decimal, long>? F2_node_create_func, LoadF2Node<TA_F2_node> F2_node_load_func,
+			long serialPerNodeWorkOffset = 0)
 		{
+			_serialPerNodeWorkOffset = serialPerNodeWorkOffset;
 			CreateF2NodeFunction = F2_node_create_func;
 			LoadTopoARTModuleParams(reader, fileFormatVersions);
 			LoadNodes(reader, fileFormatVersions, F2_node_load_func);
@@ -78,9 +87,11 @@ namespace LibTopoART
 		protected override void Dispose(bool disposing)
 		{
 			if(!_disposed) {
-				if(disposing) 
+				if(disposing)
 					StopThreads();
 				_disposed = true;
+
+				base.Dispose(disposing);
 			}
 		}
 
@@ -105,10 +116,10 @@ namespace LibTopoART
 			_learningCycles = reader.ReadInt64();
 			_nodeNum = reader.ReadInt64();
 
-			InitThreads();
+			InitThreads(_serialWorkLimit, _serialPerNodeWorkOffset);
 		}
 
-		private void LoadNodes(BinaryReader reader, FileFormatVersions fileFormatVersions, 
+		private void LoadNodes(BinaryReader reader, FileFormatVersions fileFormatVersions,
 			LoadF2Node<TA_F2_node> F2_node_load_func)
 		{
 			long i;
@@ -137,7 +148,7 @@ namespace LibTopoART
 			TA_F2_node? currentNode, previousNode;
 			var removalIDs = new long[_nodeNum];
 			long removalNum = 0;
-			
+
 			for(currentNode = _nodes, previousNode = null; currentNode != null; currentNode = currentNode._next) {
 				if(currentNode.IsNodeCandidate(phi)) {
 					removalIDs[removalNum] = currentNode.NodeID;
@@ -155,7 +166,7 @@ namespace LibTopoART
 				else
 					previousNode = currentNode;
 			}
-			
+
 			for(currentNode = _nodes; currentNode != null; currentNode = currentNode._next) {
 				for(long i = 0; i < removalNum; ++i)
 					currentNode.RemoveEdgeTo(removalIDs[i]);
@@ -179,11 +190,11 @@ namespace LibTopoART
 		{
 			Debug.Assert(nu != 0);
 
-			enclosingNodes = new Stack<TA_F2_node>(); 
+			enclosingNodes = new Stack<TA_F2_node>();
 			neighbouringNodes = new List<TA_F2_node>((int)nu);
 
 			// if no nodes exist
-			if(_nodes == null) 
+			if(_nodes == null)
 				return false;
 
 			RunActivationThreads(0.0m, mask, x_F1, ActivationType.Prediction);
@@ -192,7 +203,7 @@ namespace LibTopoART
 			long i;
 			var mu = 0.0m;
 			var sigma = 0.0m;
-			
+
 			for(currentNode = _nodes, i = 0; currentNode != null; currentNode = currentNode._next) {
 				decimal activation = currentNode.Activation;
 				mu		+=	activation;
@@ -219,7 +230,7 @@ namespace LibTopoART
 #endif
 				var minActivation = GetMinActivation(mu, sigma);
 				int j;
-				
+
 				for(currentNode = _nodes; currentNode != null; currentNode = currentNode._next) {
 					if(currentNode.Activation != 1.0m) {
 						if(neighbouringNodes.Count < nu)
@@ -294,7 +305,7 @@ namespace LibTopoART
 			return result;
 		}
 
-		public LearningResult LearnWithMask(decimal[] x_F1_vec, bool[]? mask, MatchFunction<TA_F2_node, decimal>? matchFunction, 
+		public LearningResult LearnWithMask(decimal[] x_F1_vec, bool[]? mask, MatchFunction<TA_F2_node, decimal>? matchFunction,
 			decimal alpha, decimal beta_sbm, long phi, bool skipEdgeLearning)
 		{
 			_x_F1 = x_F1_vec;
@@ -337,10 +348,10 @@ namespace LibTopoART
 			if(bmNode == null) {
 				bmNode = AddNode(_x_F1);
 				goto finish;
-			} 
+			}
 
 			bmNode.AdaptWeights(_x_F1, 1.0m);
-			
+
 			if(sbmNode != null) {
 				sbmNode.AdaptWeights(_x_F1, beta_sbm);
 				if(!skipEdgeLearning) {
@@ -353,7 +364,7 @@ finish:
 			if(bmNode == null)
 				return LearningResult.DoNotPropagate;
 
-			if(bmNode.IsNodeCandidate(phi)) 
+			if(bmNode.IsNodeCandidate(phi))
 				return LearningResult.DoNotPropagate;
 
 			return LearningResult.PropagateFurther;

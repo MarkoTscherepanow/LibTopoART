@@ -2,7 +2,7 @@
 *                                                   TopoART-R classes                                                  *
 *                                     created by Marko Tscherepanow, 6 August 2011                                     *
 ************************************************************************************************************************
-*                                  $Id: TopoART_R.cs 1680 2025-11-15 17:23:15Z marko $                                 *
+*                                  $Id: TopoART_R.cs 1836 2026-07-17 16:49:34Z marko $                                 *
 ***********************************************************************************************************************/
 
 using System;
@@ -28,6 +28,8 @@ namespace LibTopoART
 	{
 		private bool[]? _trainMask;
 		private bool[]? _default_m_i_vec;
+		private bool[]? _tmpMask;
+		private decimal[]? _tauVec;
 		private const string _networkName = "TopoART-R";
 		private const NetworkType _networkType = NetworkType.TopoARTR;
 
@@ -82,7 +84,7 @@ namespace LibTopoART
 		/// <param name="moduleNum">The number of TopoART-R modules.</param>
 		/// <param name="rho_a">The vigilance parameter of the first TopoART-R module (TopoART-R a).</param>
 		public TopoART_R(long iLen, long dLen, long moduleNum, decimal rho_a)
-			: base(CheckLength(iLen) + CheckLength(dLen), moduleNum, rho_a) 
+			: base(CheckLength(iLen) + CheckLength(dLen), moduleNum, rho_a)
 		{
 			I_len = CheckLength(iLen);
 			if(I_len != iLen)
@@ -97,8 +99,17 @@ namespace LibTopoART
 
 		/// <summary>This constructor loads a saved TopoART-R network.</summary>
 		/// <param name="path">The path of a binary TopoART-R file.</param>
-		/// <exception cref="InvalidFileException">Throws when the given file cannot be loaded.</exception>
+		/// <exception cref="InvalidFileException">Thrown when the given file cannot be loaded.</exception>
 		public TopoART_R(string path) : base(path)
+		{
+			InitTransientMembers();
+		}
+
+		/// <summary>This constructor loads a saved TopoART-R network from a stream. The stream is left open.</summary>
+		/// <param name="stream">A readable <c>Stream</c> containing a network in the binary TopoART-R file format.
+		/// </param>
+		/// <exception cref="InvalidFileException">Thrown when the given stream cannot be loaded.</exception>
+		public TopoART_R(Stream stream) : base(stream)
 		{
 			InitTransientMembers();
 		}
@@ -106,6 +117,10 @@ namespace LibTopoART
 		private void InitTransientMembers()
 		{
 			Common.InitTopoARTRMasks(out _trainMask, out _default_m_i_vec, I_len, D_len);
+
+			// reusable prediction buffers
+			_tmpMask = new bool[I_len + D_len];
+			_tauVec = new decimal[(I_len + D_len) * 2];
 		}
 
 //----------------------------------------------------------------------------------------------------------------------
@@ -139,7 +154,9 @@ namespace LibTopoART
 
 		/// <summary>This method predicts the dependent variables using the default value of nu.</summary>
 		/// <param name="input">The input vector (independent variables).</param>
-		/// <returns>The predicted values for all dependent variables.</returns>
+		/// <returns>The predicted values for all dependent variables. If no prediction is possible (e.g., for an
+		/// untrained network), all values are set to the value <c>NO_PREDICTION</c> of struct
+		/// <c>TopoART_R_prediction</c>.</returns>
 		public decimal[] Predict(decimal[] input)
 		{
 			return Predict(input, Nu);
@@ -150,7 +167,9 @@ namespace LibTopoART
 		/// <param name="nu">The maximum cardinality of the neighbourhood set N. (In the original TopoART-R network, nu
 		/// is fixed to 10. But task-specific adaptations might lead to an improved prediction accuracy. This parameter
 		/// does not modify the network. It may be arbitrarily changed in each prediction step.)</param>
-		/// <returns>The predicted values for all dependent variables.</returns>
+		/// <returns>The predicted values for all dependent variables. If no prediction is possible (e.g., for an
+		/// untrained network), all values are set to the value <c>NO_PREDICTION</c> of struct
+		/// <c>TopoART_R_prediction</c>.</returns>
 		public decimal[] Predict(decimal[] input, long nu)
 		{
 			Debug.Assert(_default_m_i_vec != null);
@@ -162,8 +181,9 @@ namespace LibTopoART
 		/// value of <paramref name="mask"/> to <c>true</c>.</summary>
 		/// <param name="input">The input vector (independent variables).</param>
 		/// <param name="mask">The mask vector corresponding to <paramref name="input"/>.</param>
-		/// <returns> An object of type <c>TopoART_R_prediction</c> containing the predicted values for the unknown
-		/// independent variables and all dependent variables.</returns>
+		/// <returns>An object of type <c>TopoART_R_prediction</c> containing the predicted values for the unknown
+		/// independent variables and all dependent variables. If no prediction is possible (e.g., for an untrained
+		/// network), all values are set to <c>NO_PREDICTION</c>.</returns>
 		public TopoART_R_prediction<decimal> Predict(decimal[] input, bool[] mask)
 		{
 			return Predict(input, mask, Nu);
@@ -177,8 +197,9 @@ namespace LibTopoART
 		/// <param name="nu">The maximum cardinality of the neighbourhood set N. (In the original TopoART-R network, nu
 		/// is fixed to 10. But task-specific adaptations might lead to an improved prediction accuracy. This parameter
 		/// does not alter the network. It may be arbitrarily changed in each prediction step.)</param>
-		/// <returns> An object of type <c>TopoART_R_prediction</c> containing the predicted values for the unknown
-		/// independent variables and all dependent variables.</returns>
+		/// <returns>An object of type <c>TopoART_R_prediction</c> containing the predicted values for the unknown
+		/// independent variables and all dependent variables. If no prediction is possible (e.g., for an untrained
+		/// network), all values are set to <c>NO_PREDICTION</c>.</returns>
 		public TopoART_R_prediction<decimal> Predict(decimal[] input, bool[] mask, long nu)
 		{
 			Debug.Assert(I_len == input.LongLength);
@@ -190,15 +211,18 @@ namespace LibTopoART
 				Debug.Assert(_modules != null);
 				Debug.Assert(_x_F0 != null);
 
-				if(_modules![ModuleNum - 1]._nodeNum < 1) 
-					return new TopoART_R_prediction<decimal>();	//empty net
+				if(_modules![ModuleNum - 1]._nodeNum < 1)
+					return new TopoART_R_prediction<decimal>(I_len, D_len);	//empty net
 
 				if(nu < 1) {
 					nu = 1;
 					Common.Warning("Invalid value for nu, changed to " + nu);
 				}
 
-				var tmpMask = new bool[_x_F0_len];
+				Debug.Assert(_tmpMask != null);
+				Debug.Assert(_tauVec != null);
+
+				var tmpMask = _tmpMask!;
 
 				for(long i = 0; i < I_len; ++i) {			// concatenate vectors
 					if(mask[i] == false)
@@ -216,9 +240,10 @@ namespace LibTopoART
 
 				var x_F1 = EncodeCurrentInput();
 
-				var tauVec = new decimal[_x_F0_len * 2];
-				for(long i = 0; i < _x_F0_len * 2; ++i) 
-					tauVec[i] = 0.0m;
+				var tauVec = _tauVec!;
+				Array.Clear(tauVec, 0, tauVec.Length);
+
+				var x_F1_len = _x_F0_len * 2;
 
 				if(_modules![ModuleNum - 1].ComputeAlternativeChoiceFunctionsWithMaskAndNu(
 					x_F1, tmpMask, nu, out Stack<TA_F2_node> enclosingNodes, out List<TA_F2_node> neighbouringNodes)) {
@@ -227,7 +252,7 @@ namespace LibTopoART
 						{
 							var currentNode = enclosingNodes.Pop();
 							var currentWeights = currentNode.Weights;
-							for(long i = 0; i < _x_F0_len * 2; ++i)
+							for(long i = 0; i < x_F1_len; ++i)
 								tauVec[i] = Math.Max(tauVec[i], currentWeights[i]);
 						} while(enclosingNodes.Count > 0);
 					} else if(neighbouringNodes.Count > 0) {
@@ -237,12 +262,13 @@ namespace LibTopoART
 
 						foreach(TA_F2_node node in neighbouringNodes) {
 							var currentWeights = node.Weights;
-							for(long i = 0; i < _x_F0_len * 2; ++i)
-								tauVec[i] += ((1.0m / (1.0m - node.Activation) * currentWeights[i]) / invSum);
+							var inv = 1.0m / (1.0m - node.Activation);
+							for(long i = 0; i < x_F1_len; ++i)
+								tauVec[i] += ((inv * currentWeights[i]) / invSum);
 						}
-					} 
+					}
 				} else
-					return new TopoART_R_prediction<decimal>();
+					return new TopoART_R_prediction<decimal>(I_len, D_len);
 
 				var iVecPrediction = new decimal[I_len];
 				var dVecPrediction = new decimal[D_len];
@@ -345,6 +371,7 @@ namespace LibTopoART
 
 		private decimal[]? _x_F0_decimal;
 		private byte[]? _x_F0_byte;
+		private Vector<int>[]? _tauVec;
 
 //----------------------------------------------------------------------------------------------------------------------
 
@@ -395,7 +422,7 @@ namespace LibTopoART
 		/// <param name="moduleNum">The number of TopoART-R modules.</param>
 		/// <param name="rho_a">The vigilance parameter of the first TopoART-R module (TopoART-R a).</param>
 		public Fast_TopoART_R(long iLen, long dLen, long moduleNum, decimal rho_a)
-			: base(CheckLength(iLen) + CheckLength(dLen), moduleNum, rho_a) 
+			: base(CheckLength(iLen) + CheckLength(dLen), moduleNum, rho_a)
 		{
 			I_len = CheckLength(iLen);
 			if(I_len != iLen)
@@ -410,8 +437,17 @@ namespace LibTopoART
 
 		/// <summary>This constructor loads a saved TopoART-R network.</summary>
 		/// <param name="path">The path of a binary TopoART-R file.</param>
-		/// <exception cref="InvalidFileException">Throws when the given file cannot be loaded.</exception>
+		/// <exception cref="InvalidFileException">Thrown when the given file cannot be loaded.</exception>
 		public Fast_TopoART_R(string path) : base(path)
+		{
+			InitTransientMembers();
+		}
+
+		/// <summary>This constructor loads a saved TopoART-R network from a stream. The stream is left open.</summary>
+		/// <param name="stream">A readable <c>Stream</c> containing a network in the binary TopoART-R file format.
+		/// </param>
+		/// <exception cref="InvalidFileException">Thrown when the given stream cannot be loaded.</exception>
+		public Fast_TopoART_R(Stream stream) : base(stream)
 		{
 			InitTransientMembers();
 		}
@@ -423,6 +459,9 @@ namespace LibTopoART
 			_defaultMask = Common.CreateVectorArray(tmpDefaultMask);
 			_x_F0_decimal = new decimal[I_len + D_len];
 			_x_F0_byte = new byte[I_len + D_len];
+
+			// reusable prediction buffer
+			_tauVec = new Vector<int>[Common.SimdLength<int>(I_len + D_len) << 1];
 		}
 
 //----------------------------------------------------------------------------------------------------------------------
@@ -486,7 +525,9 @@ namespace LibTopoART
 		/// <summary>This method predicts the dependent variables using the default value of nu.</summary>
 		/// <param name="input">The input vector (independent variables). The elements of the input vector are
 		/// internally scaled from [0, 255] to [0, 1].</param>
-		/// <returns>The predicted values for all dependent variables.</returns>
+		/// <returns>The predicted values for all dependent variables. If no prediction is possible (e.g., for an
+		/// untrained network), all values are set to the value <c>NO_PREDICTION</c> of struct
+		/// <c>TopoART_R_prediction</c>.</returns>
 		public byte[] Predict(byte[] input)
 		{
 			return Predict(input, Nu);
@@ -494,7 +535,9 @@ namespace LibTopoART
 
 		/// <summary>This method predicts the dependent variables using the default value of nu.</summary>
 		/// <param name="input">The input vector (independent variables).</param>
-		/// <returns>The predicted values for all dependent variables.</returns>
+		/// <returns>The predicted values for all dependent variables. If no prediction is possible (e.g., for an
+		/// untrained network), all values are set to the value <c>NO_PREDICTION</c> of struct
+		/// <c>TopoART_R_prediction</c>.</returns>
 		public decimal[] Predict(decimal[] input)
 		{
 			return Predict(input, Nu);
@@ -507,7 +550,8 @@ namespace LibTopoART
 		/// is fixed to 10. But task-specific adaptations might lead to an improved prediction accuracy. This parameter
 		/// does not modify the network. It may be arbitrarily changed in each prediction step.)</param>
 		/// <returns>The predicted values for all dependent variables. The elements of the predicted output vector are
-		/// internally scaled from [0, 1] to [0, 255].</returns>
+		/// internally scaled from [0, 1] to [0, 255]. If no prediction is possible (e.g., for an untrained network),
+		/// all values are set to the value <c>NO_PREDICTION</c> of struct <c>TopoART_R_prediction</c>.</returns>
 		public byte[] Predict(byte[] input, long nu)
 		{
 			Debug.Assert(I_len == input.LongLength);
@@ -523,14 +567,16 @@ namespace LibTopoART
 		/// <param name="nu">The maximum cardinality of the neighbourhood set N. (In the original TopoART-R network, nu
 		/// is fixed to 10. But task-specific adaptations might lead to an improved prediction accuracy. This parameter
 		/// does not modify the network. It may be arbitrarily changed in each prediction step.)</param>
-		/// <returns>The predicted values for all dependent variables.</returns>
+		/// <returns>The predicted values for all dependent variables. If no prediction is possible (e.g., for an
+		/// untrained network), all values are set to the value <c>NO_PREDICTION</c> of struct
+		/// <c>TopoART_R_prediction</c>.</returns>
 		public decimal[] Predict(decimal[] input, long nu)
 		{
 			Debug.Assert(I_len == input.LongLength);
 			Debug.Assert(_defaultMask != null);
 			Debug.Assert(Common.SimdLength<int>(I_len + D_len) == _defaultMask!.LongLength, "length mismatch: " +
 						(I_len + D_len).ToString() + " != " + _defaultMask!.LongLength.ToString());
-			
+
 			return PredictInternal(input, _defaultMask!, nu).d_vec_prediction;
 		}
 
@@ -540,8 +586,9 @@ namespace LibTopoART
 		/// <param name="input">The input vector (independent variables). The elements of the input vector are
 		/// internally scaled from [0, 255] to [0, 1].</param>
 		/// <param name="mask">The mask vector corresponding to <paramref name="input"/>.</param>
-		/// <returns> An object of type <c>TopoART_R_prediction</c> containing the predicted values for the unknown
-		/// independent variables and all dependent variables.</returns>
+		/// <returns>An object of type <c>TopoART_R_prediction</c> containing the predicted values for the unknown
+		/// independent variables and all dependent variables. If no prediction is possible (e.g., for an untrained
+		/// network), all values are set to <c>NO_PREDICTION</c>.</returns>
 		public TopoART_R_prediction<byte> Predict(byte[] input, bool[] mask)
 		{
 			return Predict(input, mask, Nu);
@@ -552,8 +599,9 @@ namespace LibTopoART
 		/// value of <paramref name="mask"/> to <c>true</c>.</summary>
 		/// <param name="input">The input vector (independent variables).</param>
 		/// <param name="mask">The mask vector corresponding to <paramref name="input"/>.</param>
-		/// <returns> An object of type <c>TopoART_R_prediction</c> containing the predicted values for the unknown
-		/// independent variables and all dependent variables.</returns>
+		/// <returns>An object of type <c>TopoART_R_prediction</c> containing the predicted values for the unknown
+		/// independent variables and all dependent variables. If no prediction is possible (e.g., for an untrained
+		/// network), all values are set to <c>NO_PREDICTION</c>.</returns>
 		public TopoART_R_prediction<decimal> Predict(decimal[] input, bool[] mask)
 		{
 			return Predict(input, mask, Nu);
@@ -568,14 +616,15 @@ namespace LibTopoART
 		/// <param name="nu">The maximum cardinality of the neighbourhood set N. (In the original TopoART-R network, nu
 		/// is fixed to 10. But task-specific adaptations might lead to an improved prediction accuracy. This parameter
 		/// does not modify the network. It may be arbitrarily changed in each prediction step.)</param>
-		/// <returns> An object of type <c>TopoART_R_prediction</c> containing the predicted values for the unknown
+		/// <returns>An object of type <c>TopoART_R_prediction</c> containing the predicted values for the unknown
 		/// independent variables and all dependent variables. The elements of the predicted vectors are internally
-		/// scaled from [0, 1] to [0, 255].</returns>
+		/// scaled from [0, 1] to [0, 255]. If no prediction is possible (e.g., for an untrained network), all values
+		/// are set to <c>NO_PREDICTION</c>.</returns>
 		public TopoART_R_prediction<byte> Predict(byte[] input, bool[] mask, long nu)
 		{
 			Debug.Assert(I_len == input.LongLength);
 			Debug.Assert(I_len == mask.LongLength);
-			var maskSimd = Common.CreateMaskVectorArray(I_len, D_len, mask);
+			var maskSimd = ConvertMask(I_len, D_len, mask);
 			return PredictInternal(input, maskSimd, nu);
 		}
 
@@ -587,14 +636,25 @@ namespace LibTopoART
 		/// <param name="nu">The maximum cardinality of the neighbourhood set N. (In the original TopoART-R network, nu
 		/// is fixed to 10. But task-specific adaptations might lead to an improved prediction accuracy. This parameter
 		/// does not alter the network. It may be arbitrarily changed in each prediction step.)</param>
-		/// <returns> An object of type <c>TopoART_R_prediction</c> containing the predicted values for the unknown
-		/// independent variables and all dependent variables.</returns>
+		/// <returns>An object of type <c>TopoART_R_prediction</c> containing the predicted values for the unknown
+		/// independent variables and all dependent variables. If no prediction is possible (e.g., for an untrained
+		/// network), all values are set to <c>NO_PREDICTION</c>.</returns>
 		public TopoART_R_prediction<decimal> Predict(decimal[] input, bool[] mask, long nu)
 		{
 			Debug.Assert(I_len == input.LongLength);
 			Debug.Assert(I_len == mask.LongLength);
-			var maskSimd = Common.CreateMaskVectorArray(I_len, D_len, mask);
+			var maskSimd = ConvertMask(I_len, D_len, mask);
 			return PredictInternal(input, maskSimd, nu);
+		}
+
+		private Vector<int>[] ConvertMask(long iLen, long dLen, bool[] m_i_vec)
+		{
+			Debug.Assert(iLen + dLen == _x_F0_len);
+
+			EnsureMaskBuffers();
+			Common.FillMaskVectorArray(iLen, dLen, m_i_vec, _maskInt!, _maskSimd!);
+
+			return _maskSimd!;
 		}
 
 		private TopoART_R_prediction<byte> PredictInternal(byte[] iVec, Vector<int>[] mask, long nu)
@@ -609,7 +669,7 @@ namespace LibTopoART
 								}, mask, nu);
 
 				if(tauVec == null)
-					return new TopoART_R_prediction<byte>();
+					return new TopoART_R_prediction<byte>(I_len, D_len);
 
 				var dSimd = Common.SimdLength<int>(I_len + D_len);
 				var iVecPrediction = new byte[I_len];
@@ -653,7 +713,7 @@ namespace LibTopoART
 								}, mask, nu);
 
 				if(tauVec == null)
-					return new TopoART_R_prediction<decimal>();
+					return new TopoART_R_prediction<decimal>(I_len, D_len);
 
 				var dSimd = Common.SimdLength<int>(I_len + D_len);
 				var iVecPrediction = new decimal[I_len];
@@ -691,7 +751,7 @@ namespace LibTopoART
 		{
 			Debug.Assert(_modules != null);
 
-			if(_modules![ModuleNum - 1]._nodeNum < 1) 
+			if(_modules![ModuleNum - 1]._nodeNum < 1)
 				return null;	//empty net
 
 			if(nu < 1) {
@@ -704,7 +764,12 @@ namespace LibTopoART
 			encode();
 
 			var x_F1_len_simd = _x_F1_simd!.LongLength;
-			var tauVec = new Vector<int>[x_F1_len_simd];
+
+			Debug.Assert(_tauVec != null);
+			Debug.Assert(_tauVec!.LongLength == x_F1_len_simd);
+
+			var tauVec = _tauVec!;
+			Array.Clear(tauVec, 0, tauVec.Length);
 
 			if(_modules![ModuleNum - 1].ComputeAlternativeChoiceFunctionsWithMaskAndNu(
 				_x_F1_simd!, mask, nu, out Stack<FTA_F2_node> enclosingNodes, out List<FTA_F2_node> neighbouringNodes)) {
@@ -721,13 +786,16 @@ namespace LibTopoART
 					foreach(var node in neighbouringNodes)
 						invSum += Common.ScalingFactor / (double)(Common.ScalingFactor - node.Activation);
 
+					var invSumVec = Vector<double>.One * invSum;
+
 					foreach(var node in neighbouringNodes) {
 						var frac = Common.ScalingFactor / (double)(Common.ScalingFactor - node.Activation);
+						var fracVec = new Vector<double>(frac);
 						var currentWeights = node.Weights;
 						for(long i = 0; i < x_F1_len_simd; ++i) {
 							Vector.Widen(currentWeights[i], out Vector<long> tmp1, out Vector<long> tmp2);
-							Vector<double> tmp1d = Vector.Divide(frac * Vector.ConvertToDouble(tmp1), Vector<double>.One * invSum);
-							Vector<double> tmp2d = Vector.Divide(frac * Vector.ConvertToDouble(tmp2), Vector<double>.One * invSum);
+							Vector<double> tmp1d = Vector.Divide(fracVec * Vector.ConvertToDouble(tmp1), invSumVec);
+							Vector<double> tmp2d = Vector.Divide(fracVec * Vector.ConvertToDouble(tmp2), invSumVec);
 							tauVec[i] += Vector.Narrow(Vector.ConvertToInt64(tmp1d), Vector.ConvertToInt64(tmp2d));
 						}
 					}
@@ -742,7 +810,7 @@ namespace LibTopoART
 
 		private protected override HeaderInfo LoadBinaryHeader(BinaryReader reader)
 		{
-			return Common.LoadBinaryHeader(reader, _networkType, _networkName, new FileFormatVersions(FileFormatVersion, TopoARTFileFormatVersion), 
+			return Common.LoadBinaryHeader(reader, _networkType, _networkName, new FileFormatVersions(FileFormatVersion, TopoARTFileFormatVersion),
 				integerType, floatType);
 		}
 

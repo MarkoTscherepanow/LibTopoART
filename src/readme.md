@@ -4,4 +4,4 @@
 
 Besides the TopoART neural network itself, LibTopoART comprises implementations of Episodic TopoART (episodic clustering of data streams), Hypersphere TopoART (clustering and topology-learning), TopoART-AM (associative memory), TopoART-C and Hypersphere TopoART-C (classification), and TopoART-R (regression).
 
-The reference manual, samples, and visualisation tools can be downloaded from the [LibTopoART website](https://www.libtopoart.eu/release_notes_v100.php).
+The reference manual, samples, and visualisation tools can be downloaded from the [LibTopoART website](https://www.libtopoart.eu/release_notes_v110.php).

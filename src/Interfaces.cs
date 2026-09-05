@@ -16,7 +16,7 @@ namespace LibTopoART
 		long NodeID { get; }
 
 		void ComputeAlternativeChoiceFunction(TSpatialWeightType[] x_F1, TMaskType[]? mask);
-		void ComputeChoiceAndMatchFunction(TSpatialWeightType[] x_F1, TTemporalWeightType[]? t_F1, 
+		void ComputeChoiceAndMatchFunction(TSpatialWeightType[] x_F1, TTemporalWeightType[]? t_F1,
 										   TMaskType[]? mask, TFloatType alpha);
 		void GetConnectedNodeIDs(out long size, out long[]? connectedNodeIDs);
 		decimal[] GetCopyOfSpatialWeights();
@@ -85,7 +85,7 @@ namespace LibTopoART
 
 //**********************************************************************************************************************
 
-	/// <summary>Interface providing access to the learnt categories, e.g for drawing.</summary>
+	/// <summary>Interface providing access to the learnt categories, e.g., for drawing.</summary>
 	public interface ICategoryAccess
 	{
 		/// <summary>This method collects information on the categories of a specified module.</summary>
@@ -230,8 +230,8 @@ namespace LibTopoART
 		long Phi { get; set; }
 
 		/// <value>Property <c>Phis</c> constitutes an extension of property <c>Phi</c> that enables individual values
-		/// of phi for each module. By this, the removal of nodes and edges as well as for the propagation of input to
-		/// subsequent TopoART modules can be controlled in a task dependent manner.</value>
+		/// of phi for each module. By this, the removal of nodes and edges as well as the propagation of input to
+		/// subsequent TopoART modules can be controlled in a task-dependent manner.</value>
 		long[] Phis { get; set; }
 
 		/// <value>Property <c>Alpha</c> represents the choice parameter alpha.</value>
@@ -249,6 +249,24 @@ namespace LibTopoART
 		/// <param name="compression">Compression level of the save file (Compression is not supported by LibTopoART
 		/// v0.93 and below.)</param>
 		void Save(string path, CompressionLevel compression = CompressionLevel.Fastest);
+	}
+
+//----------------------------------------------------------------------------------------------------------------------
+
+	/// <summary>Interface extending the basic TopoART functionality by stream-based saving.</summary>
+	public interface ITopoART_base_stream : ITopoART_base
+	{
+		/// <summary>This method saves the entire network as text to a writer. The writer is flushed but left open.
+		/// </summary>
+		/// <param name="writer">A <c>TextWriter</c> the network is saved to.</param>
+		void SaveText(TextWriter writer);
+
+		/// <summary>This method saves the entire network to a stream using the binary file format. The stream is left
+		/// open.</summary>
+		/// <param name="stream">A writable <c>Stream</c> the network is saved to.</param>
+		/// <param name="compression">Compression level of the saved data (Compression is not supported by LibTopoART
+		/// v0.93 and below.)</param>
+		void Save(Stream stream, CompressionLevel compression = CompressionLevel.Fastest);
 	}
 
 //----------------------------------------------------------------------------------------------------------------------
@@ -407,7 +425,7 @@ namespace LibTopoART
 		/// <summary>This method predicts the class ID using the default value of nu.</summary>
 		/// <param name="input">The input vector the class ID of which is to be predicted.</param>
 		/// <param name="mask">The mask vector corresponding to <paramref name="input"/>.</param>
-		/// <returns> An object of type <c>TopoART_C_prediction</c> containing the predicted class ID and a
+		/// <returns>An object of type <c>TopoART_C_prediction</c> containing the predicted class ID and a
 		/// corresponding confidence value.</returns>
 		TopoART_C_prediction Predict(TAccessType[] input, bool[] mask);
 
@@ -416,7 +434,7 @@ namespace LibTopoART
 		/// <param name="mask">The mask vector corresponding to <paramref name="input"/>.</param>
 		/// <param name="nu">The maximum cardinality of the set of enclosing categories E and the neighbourhood set N.
 		/// (This parameter does not modify the network. It may be arbitrarily changed in each prediction step.)</param>
-		/// <returns> An object of type <c>TopoART_C_prediction</c> containing the predicted class ID and a
+		/// <returns>An object of type <c>TopoART_C_prediction</c> containing the predicted class ID and a
 		/// corresponding confidence value.</returns>
 		TopoART_C_prediction Predict(TAccessType[] input, bool[] mask, long nu);
 	}
@@ -487,7 +505,7 @@ namespace LibTopoART
 		/// value of <paramref name="mask"/> to <c>true</c>.</summary>
 		/// <param name="input">The input vector (independent variables).</param>
 		/// <param name="mask">The mask vector corresponding to <paramref name="input"/>.</param>
-		/// <returns> An object of type <c>TopoART_R_prediction</c> containing the predicted values for the unknown
+		/// <returns>An object of type <c>TopoART_R_prediction</c> containing the predicted values for the unknown
 		/// independent variables and all dependent variables.</returns>
 		TopoART_R_prediction<TAccessType> Predict(TAccessType[] input, bool[] mask);
 
@@ -499,7 +517,7 @@ namespace LibTopoART
 		/// <param name="nu">The maximum cardinality of the neighbourhood set N. (In the original TopoART-R network, nu
 		/// is fixed to 10. But task-specific adaptations might lead to an improved prediction accuracy. This parameter
 		/// does not modify the network. It may be arbitrarily changed in each prediction step.)</param>
-		/// <returns> An object of type <c>TopoART_R_prediction</c> containing the predicted values for the unknown
+		/// <returns>An object of type <c>TopoART_R_prediction</c> containing the predicted values for the unknown
 		/// independent variables and all dependent variables.</returns>
 		TopoART_R_prediction<TAccessType> Predict(TAccessType[] input, bool[] mask, long nu);
 	}

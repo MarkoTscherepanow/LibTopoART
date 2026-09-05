@@ -2,7 +2,7 @@
 *                                                    TopoART class                                                     *
 *                                      created by Marko Tscherepanow, 12 June 2011                                     *
 ************************************************************************************************************************
-*                                   $Id: TopoART.cs 1680 2025-11-15 17:23:15Z marko $                                  *
+*                                   $Id: TopoART.cs 1845 2026-08-15 14:52:37Z marko $                                  *
 ***********************************************************************************************************************/
 
 using System;
@@ -26,7 +26,7 @@ namespace LibTopoART
 	/// computations are rather slow but very accurate.</para>
 	/// <para>Class <c>TopoART</c> requires all input to lie in the interval [0, 1].</para>
 	/// </summary>
-	public class TopoART : Network_base, ITopoART, ICategoryAccess, IDisposable
+	public class TopoART : Network_base, ITopoART, ITopoART_base_stream, ICategoryAccess, IDisposable
 	{
 		/// <summary>Instance variable <c>x_F0</c> represents the current input vector.</summary>
 		private protected decimal[]? _x_F0;
@@ -43,19 +43,21 @@ namespace LibTopoART
 
 //----------------------------------------------------------------------------------------------------------------------
 
+		private const long _serialPerNodeWorkOffset = 6;
+
 		private protected TopoART_module CreateTopoARTModule(long inputLen, decimal rho, CreateF2Node<TA_F2_node, decimal, long>? F2_node_create_func)
 		{
-			return new TopoART_module(inputLen, rho, F2_node_create_func);
+			return new TopoART_module(inputLen, rho, F2_node_create_func, _serialPerNodeWorkOffset);
 		}
 
 		private protected TopoART_module LoadTopoARTModule(BinaryReader reader, in (FileFormatVersions, bool) fileFormatInfo,
 			CreateF2Node<TA_F2_node, decimal, long>? F2_node_create_func, LoadF2Node<TA_F2_node> F2_node_load_func)
 		{
 			Debug.Assert(fileFormatInfo.Item2 == false);
-			return new TopoART_module(reader, fileFormatInfo.Item1, F2_node_create_func, F2_node_load_func);
+			return new TopoART_module(reader, fileFormatInfo.Item1, F2_node_create_func, F2_node_load_func, _serialPerNodeWorkOffset);
 		}
 
-		private TA_F2_node CreateTopoARTF2Node(long nodeID, long inputLen, decimal[] spatialWeights, 
+		private TA_F2_node CreateTopoARTF2Node(long nodeID, long inputLen, decimal[] spatialWeights,
 		    long[]? temporalWeights)
 		{
 			Debug.Assert(temporalWeights == null);
@@ -89,7 +91,7 @@ namespace LibTopoART
 							Common.Warning("alpha might be too large");
 					}
 					Common.Message($"alpha set to {Alpha:0.##########}");
-				} else 
+				} else
 					Common.Warning("Unable to set alpha after training started, keep old value " + Alpha);
 			}
 		}
@@ -106,10 +108,10 @@ namespace LibTopoART
 					} else if (value > 1.0m) {
 						field = 1.0m;
 						Common.Warning("Too large value for beta_sbm, changed to " + Beta_sbm);
-					} else 
+					} else
 						field = value;
 					Common.Message($"beta_sbm set to {Beta_sbm:0.##########}");
-				} else 
+				} else
 					Common.Warning("Unable to set beta_sbm after training started, keep old value " + Beta_sbm);
 			}
 		}
@@ -182,7 +184,7 @@ namespace LibTopoART
 		/// <param name="inputLen">The length of input vectors to be learnt.</param>
 		/// <param name="moduleNum">The number of TopoART modules.</param>
 		/// <param name="rho_a">The vigilance parameter of the first TopoART module (TA a).</param>
-		public TopoART(long inputLen, long moduleNum, decimal rho_a) 
+		public TopoART(long inputLen, long moduleNum, decimal rho_a)
 		{
 			SetTopoARTParams(inputLen, moduleNum, rho_a);
 			InitModules(inputLen << 1, CreateTopoARTModule, CreateTopoARTF2Node);
@@ -195,7 +197,7 @@ namespace LibTopoART
 			if(inputLen < 1) {
 				inputLen = 1;				// check required, as otherwise HTA causes a division by zero
 				Common.Warning("Invalid length of the input vector x_F0, changed to " + inputLen);
-			} 
+			}
 			_x_F0_len = inputLen;
 
 			_x_F0 = new decimal[_x_F0_len];
@@ -229,65 +231,83 @@ namespace LibTopoART
 
 		/// <summary>This constructor loads a saved TopoART network.</summary>
 		/// <param name="path">The path of a binary TopoART file.</param>
-		/// <exception cref="InvalidFileException">Throws when the given file cannot be loaded.</exception>
-		public TopoART(string path) 
+		/// <exception cref="InvalidFileException">Thrown when the given file cannot be loaded.</exception>
+		public TopoART(string path)
 		{
 			using var file = File.Open(path, FileMode.Open, FileAccess.Read, FileShare.Read);
-
-			var fileFormatVersions = LoadTopoARTParams(file, TopoARTMatchFunction, out var reader);
-			InitModules(reader, fileFormatVersions, LoadTopoARTModule, CreateTopoARTF2Node, LoadTopoARTF2Node);
-			reader.Dispose();
+			LoadNetwork(file);
 		}
 
-		private protected FileFormatVersions LoadTopoARTParams(FileStream file, MatchFunction<TA_F2_node, decimal>? initialMatchFunction,
-			out BinaryReader reader)
+		/// <summary>This constructor loads a saved TopoART network from a stream. The stream is left open.</summary>
+		/// <param name="stream">A readable <c>Stream</c> containing a network in the binary TopoART file format.</param>
+		/// <exception cref="InvalidFileException">Thrown when the given stream cannot be loaded.</exception>
+		public TopoART(Stream stream)
+		{
+			LoadNetwork(stream);
+		}
+
+		private void LoadNetwork(Stream stream)
+		{
+			using var reader = LoadTopoARTParams(stream, TopoARTMatchFunction, out var fileFormatVersions);
+			InitModules(reader, fileFormatVersions, LoadTopoARTModule, CreateTopoARTF2Node, LoadTopoARTF2Node);
+		}
+
+		private protected BinaryReader LoadTopoARTParams(Stream stream, MatchFunction<TA_F2_node, decimal>? initialMatchFunction,
+			out FileFormatVersions fileFormatVersions)
 		{
 			(FileFormatVersions fileFormatVersions, SaveFlags flags) headerInfo;
-			using(var headerReader = new BinaryReader(file, Encoding.UTF8, true))
+			using(var headerReader = new BinaryReader(stream, Encoding.UTF8, true))
 				headerInfo = LoadBinaryHeader(headerReader);
 
-			reader = headerInfo.flags == SaveFlags.None ? new BinaryReader(file) : new BinaryReader(new GZipStream(file, CompressionMode.Decompress));
+			fileFormatVersions = headerInfo.fileFormatVersions;
 
-			LoadPrecedingBinaryInformation(reader, headerInfo.fileFormatVersions);
+			var reader = headerInfo.flags == SaveFlags.None ? new BinaryReader(stream, Encoding.UTF8, true) : new BinaryReader(new GZipStream(stream, CompressionMode.Decompress, true));
 
-			_x_F0_len = reader.ReadInt64();
-			_x_F0 = new decimal[_x_F0_len];
-			for(long i = 0; i < _x_F0_len; ++i)
-				_x_F0[i]=reader.ReadDecimal();
+			try {
+				LoadPrecedingBinaryInformation(reader, headerInfo.fileFormatVersions);
 
-			var tmpRhoA = reader.ReadDecimal();
-			if(tmpRhoA < 0.0m) {
-				Rho_a = 0.0m;
-				Common.Warning("Too small value for rho_a, changed to " + Rho_a);
-			} else if (tmpRhoA > 1.0m) {
-				Rho_a = 1.0m;
-				Common.Warning("Too large value for rho_a, changed to " + Rho_a);
-			} else
-				Rho_a = tmpRhoA;
-			
-			Common.Message($"rho_a set to {Rho_a:0.##########}");
+				_x_F0_len = reader.ReadInt64();
+				_x_F0 = new decimal[_x_F0_len];
+				for(long i = 0; i < _x_F0_len; ++i)
+					_x_F0[i]=reader.ReadDecimal();
 
-			Beta_sbm = reader.ReadDecimal();
-			Tau = reader.ReadInt64();
-			var tmpPhi = reader.ReadInt64();
-			var tmpLearningSteps = reader.ReadInt64();
-			Alpha = reader.ReadDecimal();
+				var tmpRhoA = reader.ReadDecimal();
+				if(tmpRhoA < 0.0m) {
+					Rho_a = 0.0m;
+					Common.Warning("Too small value for rho_a, changed to " + Rho_a);
+				} else if (tmpRhoA > 1.0m) {
+					Rho_a = 1.0m;
+					Common.Warning("Too large value for rho_a, changed to " + Rho_a);
+				} else
+					Rho_a = tmpRhoA;
 
-			_skipEdgeLearning = headerInfo.fileFormatVersions.TopoARTFileFormatVersion >= 1.0m ? reader.ReadBoolean() : false;
+				Common.Message($"rho_a set to {Rho_a:0.##########}");
 
-			ModuleNum = reader.ReadInt64();
-			_phis = new long[ModuleNum];
+				Beta_sbm = reader.ReadDecimal();
+				Tau = reader.ReadInt64();
+				var tmpPhi = reader.ReadInt64();
+				var tmpLearningSteps = reader.ReadInt64();
+				Alpha = reader.ReadDecimal();
 
-			// load phi array if required
-			if(tmpPhi == LibTopoART_info.UNDEFINED) 
-				for(long i = 0; i < ModuleNum; ++i)
-					_phis[i] = reader.ReadInt64();
-			else
-				Phi = tmpPhi;
+				_skipEdgeLearning = headerInfo.fileFormatVersions.TopoARTFileFormatVersion >= 1.0m ? reader.ReadBoolean() : false;
 
-			LearningSteps = tmpLearningSteps;
+				ModuleNum = reader.ReadInt64();
+				_phis = new long[ModuleNum];
 
-			return headerInfo.fileFormatVersions;
+				// load phi array if required
+				if(tmpPhi == LibTopoART_info.UNDEFINED)
+					for(long i = 0; i < ModuleNum; ++i)
+						_phis[i] = reader.ReadInt64();
+				else
+					Phi = tmpPhi;
+
+				LearningSteps = tmpLearningSteps;
+
+				return reader;
+			} catch {
+				reader.Dispose();
+				throw;
+			}
 		}
 
 		private protected virtual (FileFormatVersions, SaveFlags) LoadBinaryHeader(BinaryReader reader)
@@ -327,7 +347,7 @@ namespace LibTopoART
 				if(disposing) {
 					if(_modules != null) {
 						lock(_learningLock) {
-							CompleteLearningQueue();
+							CompleteLearningQueueNoThrow();
 
 							for(long i = 0; i < ModuleNum; ++i) {
 								if(_modules[i] != null) {
@@ -354,7 +374,7 @@ namespace LibTopoART
 				CompleteLearningQueue();
 
 				for(long i = 0; i < ModuleNum; ++i)
-					_modules![i].ComputeClusterIDs(Phis[i]);
+					_modules![i].ComputeClusterIDs(_phis![i]);
 			}
 		}
 
@@ -416,7 +436,7 @@ namespace LibTopoART
 				CompleteLearningQueue();
 
 				for(long i = 0; i < ModuleNum; ++i)
-					result[i] = _modules![i].GetBMOutputWithMask(x_F1, mask, Phis[i]);
+					result[i] = _modules![i].GetBMOutputWithMask(x_F1, mask, _phis![i]);
 			}
 
 			return result;
@@ -447,11 +467,11 @@ namespace LibTopoART
 					if(lr == LearningResult.PropagateFurther) {
 						if(createFunction != null)
 							_modules![m].CreateF2NodeFunction = createFunction;
-						lr = _modules![m].LearnWithMask(x_F1, mask, matchFunction ?? TopoARTMatchFunction, Alpha, Beta_sbm, Phis[m], _skipEdgeLearning);
+						lr = _modules![m].LearnWithMask(x_F1, mask, matchFunction ?? TopoARTMatchFunction, Alpha, Beta_sbm, _phis![m], _skipEdgeLearning);
 					}
 
-					if((_modules![m].LearningCycles % Tau) == 0)
-						_modules![m].RemoveNodeCandidates(Phis[m]);
+					if((_modules![m].LearningCycles != 0) && ((_modules![m].LearningCycles % Tau) == 0))
+						_modules![m].RemoveNodeCandidates(_phis![m]);
 			});
 		}
 
@@ -461,10 +481,17 @@ namespace LibTopoART
 		/// <param name="path">A <c>string</c> representing the path of the file to save.</param>
 		public void SaveText(string path)
 		{
+			using var writer = new StreamWriter(File.Open(path, FileMode.Create));
+			SaveText(writer);
+		}
+
+		/// <summary>This method saves the entire network as text to a writer. The writer is flushed but left open.
+		/// </summary>
+		/// <param name="writer">A <c>TextWriter</c> the network is saved to.</param>
+		public void SaveText(TextWriter writer)
+		{
 			Debug.Assert(_x_F0 != null);
 			Debug.Assert(_modules != null);
-
-			using var writer = new StreamWriter(File.Open(path, FileMode.Create));
 
 			SaveTextHeader(writer);
 			SavePrecedingTextInformation(writer);
@@ -492,7 +519,7 @@ namespace LibTopoART
 			if(Phi == LibTopoART_info.UNDEFINED) {
 				writer.Write("phis:");
 				for(long i = 0; i < ModuleNum; ++i)
-					writer.Write(" " + Phis[i]);
+					writer.Write(" " + _phis![i]);
 				writer.Write("\n");
 			}
 
@@ -506,6 +533,8 @@ namespace LibTopoART
 					_modules![i].SaveText(writer);
 				}
 			}
+
+			writer.Flush();
 		}
 
 		private protected override void SaveTextHeader(TextWriter writer)
@@ -528,18 +557,27 @@ namespace LibTopoART
 		/// v0.93 and below.)</param>
 		public void Save(string path, CompressionLevel compression = CompressionLevel.Fastest)
 		{
+			using var file = File.Open(path, FileMode.Create);
+			Save(file, compression);
+		}
+
+		/// <summary>This method saves the entire network to a stream using the binary file format. The stream is left
+		/// open.</summary>
+		/// <param name="stream">A writable <c>Stream</c> the network is saved to.</param>
+		/// <param name="compression">Compression level of the saved data (Compression is not supported by LibTopoART
+		/// v0.93 and below.)</param>
+		public void Save(Stream stream, CompressionLevel compression = CompressionLevel.Fastest)
+		{
 			Debug.Assert(_x_F0 != null);
 			Debug.Assert(_modules != null);
 
 			if(TopoARTFileFormatVersion <= 0.10m)
 				compression = CompressionLevel.NoCompression;
 
-			using var file = File.Open(path, FileMode.Create);
-
-			using(var headerWriter = new BinaryWriter(file, Encoding.UTF8, true))
+			using(var headerWriter = new BinaryWriter(stream, Encoding.UTF8, true))
 				SaveBinaryHeader(headerWriter, compression);
 
-			using var writer = compression == CompressionLevel.NoCompression ? new BinaryWriter(file) : new BinaryWriter(new GZipStream(file, compression));
+			using var writer = compression == CompressionLevel.NoCompression ? new BinaryWriter(stream, Encoding.UTF8, true) : new BinaryWriter(new GZipStream(stream, compression, true));
 
 			SavePrecedingBinaryInformation(writer);
 
@@ -562,7 +600,7 @@ namespace LibTopoART
 			// save phi array if the values differ
 			if(Phi == LibTopoART_info.UNDEFINED)
 				for(long i = 0; i < ModuleNum; ++i)
-					writer.Write(Phis[i]);
+					writer.Write(_phis![i]);
 
 			lock(_learningLock) {
 				CompleteLearningQueue();
@@ -581,11 +619,11 @@ namespace LibTopoART
 
 //----------------------------------------------------------------------------------------------------------------------
 
-		private protected void InitModules(long inputLen, CreateModule<TopoART_module, TA_F2_node, decimal, decimal, long> moduleCreateFunction, 
+		private protected void InitModules(long inputLen, CreateModule<TopoART_module, TA_F2_node, decimal, decimal, long> moduleCreateFunction,
 								  CreateF2Node<TA_F2_node, decimal, long>? F2_node_create_func)
 		{
 			_modules = new TopoART_module[ModuleNum];
-			
+
 			long i;
 			decimal rho;
 			for(i = 0, rho = Rho_a; i < ModuleNum; ++i, rho = 0.5m * (rho + 1.0m)) {
@@ -595,7 +633,7 @@ namespace LibTopoART
 
 		private protected void InitModules(BinaryReader reader, in FileFormatVersions fileFormatVersions,
 								  LoadModule<TopoART_module, TA_F2_node, decimal, long> moduleLoadFunction,
-								  CreateF2Node<TA_F2_node, decimal, long>? F2_node_create_func, 
+								  CreateF2Node<TA_F2_node, decimal, long>? F2_node_create_func,
 								  LoadF2Node<TA_F2_node> F2_node_load_func)
 		{
 			_modules = new TopoART_module[ModuleNum];
@@ -613,7 +651,7 @@ namespace LibTopoART
 //----------------------------------------------------------------------------------------------------------------------
 
 		/// <summary>This method resets the adaptation state to <c>AdaptationState.NO_ADAPTATION</c>.</summary>
-		/// <exception cref="InvalidNumberException">Throws when the number of edges of an F2 node is greater than
+		/// <exception cref="InvalidNumberException">Thrown when the number of edges of an F2 node is greater than
 		/// <c>int.MaxValue</c>.</exception>
 		public void ResetAdaptationState()
 		{
@@ -623,8 +661,8 @@ namespace LibTopoART
 		/// <summary>This method returns the current adaptation state.</summary>
 		/// <param name="epsilon">The threshold for weight adaptations to be considered.</param>
 		/// <returns>An enumeration describing the adaptation state.</returns>
-		/// <exception cref="InvalidStateException">Throws when the network is in an invalid state.</exception>
-		/// <exception cref="InvalidNumberException">Throws when the number of edges of an F2 node is greater than
+		/// <exception cref="InvalidStateException">Thrown when the network is in an invalid state.</exception>
+		/// <exception cref="InvalidNumberException">Thrown when the number of edges of an F2 node is greater than
 		/// <c>int.MaxValue</c>.</exception>
 		public AdaptationState GetAdaptationState(decimal epsilon = 0.001m)
 		{
@@ -636,7 +674,7 @@ namespace LibTopoART
 				AdaptationState result = AdaptationState.NO_ADAPTATION;
 
 				for(long i = 0; i < ModuleNum; ++i) {
-					result |= _modules![i].GetAdaptationState(Phis[i], (weight1, weight2) =>  {
+					result |= _modules![i].GetAdaptationState(_phis![i], (weight1, weight2) =>  {
 						var diff = weight2 - weight1;
 						if(diff < 0)
 							diff = -diff;
@@ -653,7 +691,7 @@ namespace LibTopoART
 		/// <summary>This method checks a provided module index and sets <c>FINAL_MODULE</c> to <c>ModuleNum - 1</c>.
 		/// </summary>
 		/// <param name="moduleIndex">The module index to be checked.</param>
-		/// <exception cref="InvalidModuleIndexException">Throws when
+		/// <exception cref="InvalidModuleIndexException">Thrown when
 		/// <paramref name="moduleIndex"/> is invalid.</exception>
 		private long GetModuleIndex(long moduleIndex)
 		{
@@ -668,9 +706,9 @@ namespace LibTopoART
 		/// <summary>This method collects information on the categories of a specified module.</summary>
 		/// <param name="moduleIndex">The index of the module the categories of which are to be analysed.</param>
 		/// <returns>A list containing information about the respective categories.</returns>
-		/// <exception cref="InvalidModuleIndexException">Throws when <paramref name="moduleIndex"/> is invalid.
+		/// <exception cref="InvalidModuleIndexException">Thrown when <paramref name="moduleIndex"/> is invalid.
 		/// </exception>
-		/// <exception cref="InvalidNumberException">Throws when the number of nodes of a module is greater than
+		/// <exception cref="InvalidNumberException">Thrown when the number of nodes of a module is greater than
 		/// <c>int.MaxValue</c>.</exception>
 		public List<CategoryInfo>? GetCategories(long moduleIndex = FINAL_MODULE)
 		{

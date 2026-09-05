@@ -2,7 +2,7 @@
 *                                               Hypersphere TopoART class                                              *
 *                                    created by Marko Tscherepanow, 16 February 2014                                   *
 ************************************************************************************************************************
-*                             $Id: Hypersphere_TopoART.cs 1680 2025-11-15 17:23:15Z marko $                            *
+*                             $Id: Hypersphere_TopoART.cs 1845 2026-08-15 14:52:37Z marko $                            *
 ***********************************************************************************************************************/
 
 using System;
@@ -40,7 +40,22 @@ namespace LibTopoART
 
 //----------------------------------------------------------------------------------------------------------------------
 
-		private TA_F2_node CreateHypersphereTopoARTF2Node(long nodeID,
+		private protected const long _serialPerNodeWorkOffset = 16;
+
+		private protected TopoART_module CreateHypersphereTopoARTModule(long inputLen, decimal rho,
+			CreateF2Node<TA_F2_node, decimal, long>? F2_node_create_func)
+		{
+			return new TopoART_module(inputLen, rho, F2_node_create_func, _serialPerNodeWorkOffset);
+		}
+
+		private protected TopoART_module LoadHypersphereTopoARTModule(BinaryReader reader, in (FileFormatVersions, bool) fileFormatInfo,
+			CreateF2Node<TA_F2_node, decimal, long>? F2_node_create_func, LoadF2Node<TA_F2_node> F2_node_load_func)
+		{
+			Debug.Assert(fileFormatInfo.Item2 == false);
+			return new TopoART_module(reader, fileFormatInfo.Item1, F2_node_create_func, F2_node_load_func, _serialPerNodeWorkOffset);
+		}
+
+	private TA_F2_node CreateHypersphereTopoARTF2Node(long nodeID,
 			long inputLen, decimal[] spatialWeights, long[]? temporalWeights)
 		{
 			return new HTA_F2_node(nodeID, inputLen, spatialWeights, R);
@@ -86,18 +101,32 @@ namespace LibTopoART
 
 			Common.Message($"R set to {this.R:0.##########}");
 
-			InitModules(inputLen + 1, CreateTopoARTModule, CreateHypersphereTopoARTF2Node);
+			InitModules(inputLen + 1, CreateHypersphereTopoARTModule, CreateHypersphereTopoARTF2Node);
 		}
 
 		/// <summary>This constructor loads a saved Hypersphere TopoART network.</summary>
 		/// <param name="path">The path of a binary Hypersphere TopoART file.</param>
-		/// <exception cref="InvalidFileException">Throws when the given file cannot be loaded.</exception>
+		/// <exception cref="InvalidFileException">Thrown when the given file cannot be loaded.</exception>
 		public Hypersphere_TopoART(string path)
 		{
 			using var file = File.Open(path, FileMode.Open, FileAccess.Read, FileShare.Read);
+			LoadNetwork(file);
+		}
 
-			FileFormatVersions fileFormatVersions = LoadTopoARTParams(file, TopoARTMatchFunction, out var reader);
-			InitModules(reader, fileFormatVersions, LoadTopoARTModule, CreateHypersphereTopoARTF2Node, LoadHypersphereTopoARTF2Node);
+		/// <summary>This constructor loads a saved Hypersphere TopoART network from a stream. The stream is left open.
+		/// </summary>
+		/// <param name="stream">A readable <c>Stream</c> containing a network in the binary Hypersphere TopoART file
+		/// format.</param>
+		/// <exception cref="InvalidFileException">Thrown when the given stream cannot be loaded.</exception>
+		public Hypersphere_TopoART(Stream stream)
+		{
+			LoadNetwork(stream);
+		}
+
+		private void LoadNetwork(Stream stream)
+		{
+			using var reader = LoadTopoARTParams(stream, TopoARTMatchFunction, out FileFormatVersions fileFormatVersions);
+			InitModules(reader, fileFormatVersions, LoadHypersphereTopoARTModule, CreateHypersphereTopoARTF2Node, LoadHypersphereTopoARTF2Node);
 		}
 
 //----------------------------------------------------------------------------------------------------------------------

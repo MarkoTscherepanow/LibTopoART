@@ -2,7 +2,7 @@
 *                                                   TopoART-C classes                                                  *
 *                                       created by Marko Tscherepanow, 25 June 2016                                    *
 ************************************************************************************************************************
-*                                 $Id: TopoART_C.cs 1680 2025-11-15 17:23:15Z marko $                                  *
+*                                 $Id: TopoART_C.cs 1838 2026-07-17 21:32:05Z marko $                                  *
 ***********************************************************************************************************************/
 
 using System;
@@ -32,7 +32,7 @@ namespace LibTopoART
 		private const long UNDEFINED = LibTopoART_info.UNDEFINED;
 
 		/// <summary>Instance variable <c>UNDEFINED_CLASS_ID</c> gives the value used for indicating that an input
-		/// sample was predicted to belong to the undefined class; i.e, no class ID was provided for such input samples
+		/// sample was predicted to belong to the undefined class; i.e., no class ID was provided for such input samples
 		/// during training.</summary>
 		public const long UNDEFINED_CLASS_ID = -2;
 
@@ -90,14 +90,27 @@ namespace LibTopoART
 
 		/// <summary>This constructor loads a saved TopoART-C network.</summary>
 		/// <param name="path">The path of a binary TopoART-C file.</param>
-		/// <exception cref="InvalidFileException">Throws when the given file cannot be loaded.</exception>
+		/// <exception cref="InvalidFileException">Thrown when the given file cannot be loaded.</exception>
 		public TopoART_C(string path)
 		{
 			using var file = File.Open(path, FileMode.Open, FileAccess.Read, FileShare.Read);
+			LoadNetwork(file);
+		}
 
-			var fileFormatVersions = LoadTopoARTParams(file, null, out var outerReader);
-			InitModules(outerReader, fileFormatVersions, LoadTopoARTModule, null, (BinaryReader reader, 
-				in (FileFormatVersions localFileFormatVersions, bool) localFileFormatInfo) => 
+		/// <summary>This constructor loads a saved TopoART-C network from a stream. The stream is left open.</summary>
+		/// <param name="stream">A readable <c>Stream</c> containing a network in the binary TopoART-C file format.
+		/// </param>
+		/// <exception cref="InvalidFileException">Thrown when the given stream cannot be loaded.</exception>
+		public TopoART_C(Stream stream)
+		{
+			LoadNetwork(stream);
+		}
+
+		private void LoadNetwork(Stream stream)
+		{
+			using var outerReader = LoadTopoARTParams(stream, null, out var fileFormatVersions);
+			InitModules(outerReader, fileFormatVersions, LoadTopoARTModule, null, (BinaryReader reader,
+				in (FileFormatVersions localFileFormatVersions, bool) localFileFormatInfo) =>
 					new TAC_F2_node(reader, localFileFormatInfo.localFileFormatVersions));
 		}
 
@@ -115,7 +128,7 @@ namespace LibTopoART
 		/// <param name="input">The input vector to be learnt.</param>
 		/// <param name="classID">The class ID corresponding to <paramref name="input"/>. (must be equal to or larger
 		/// than 0)</param>
-		/// <exception cref="InvalidClassIDException">Throws when <paramref name="classID"/> is less than 0.</exception>
+		/// <exception cref="InvalidClassIDException">Thrown when <paramref name="classID"/> is less than 0.</exception>
 		public void Learn(decimal[] input, long classID)
 		{
 			if(classID < 0)
@@ -126,7 +139,7 @@ namespace LibTopoART
 
 		private void LearnInternal(decimal[] input, long classID)
 		{
-			CreateF2Node<TA_F2_node, decimal, long> createFunction = 
+			CreateF2Node<TA_F2_node, decimal, long> createFunction =
 				(nodeID, inputLen, spatialWeights, temporalWeights) =>
 				{
 					Debug.Assert(temporalWeights == null);
@@ -135,7 +148,7 @@ namespace LibTopoART
 
 			Debug.Assert(_modules != null);
 
-			MatchFunction<TA_F2_node, decimal> matchFunction = (node, rho) => 
+			MatchFunction<TA_F2_node, decimal> matchFunction = (node, rho) =>
 				node.MatchValue >= rho && ((TAC_F2_node)node).ClassID == classID;
 
 			LearnWithMask(input, null, createFunction, matchFunction);
@@ -164,7 +177,7 @@ namespace LibTopoART
 		/// <summary>This method predicts the class ID using the default value of nu.</summary>
 		/// <param name="input">The input vector the class ID of which is to be predicted.</param>
 		/// <param name="mask">The mask vector corresponding to <paramref name="input"/>.</param>
-		/// <returns> An object of type <c>TopoART_C_prediction</c> containing the predicted class ID and a
+		/// <returns>An object of type <c>TopoART_C_prediction</c> containing the predicted class ID and a
 		/// corresponding confidence value.</returns>
 		public TopoART_C_prediction Predict(decimal[] input, bool[]? mask)
 		{
@@ -176,7 +189,7 @@ namespace LibTopoART
 		/// <param name="mask">The mask vector corresponding to <paramref name="input"/>.</param>
 		/// <param name="nu">The maximum cardinality of the set of enclosing categories E and the neighbourhood set N.
 		/// (This parameter does not modify the network. It may be arbitrarily changed in each prediction step.)</param>
-		/// <returns> An object of type <c>TopoART_C_prediction</c> containing the predicted class ID and a
+		/// <returns>An object of type <c>TopoART_C_prediction</c> containing the predicted class ID and a
 		/// corresponding confidence value.</returns>
 		public TopoART_C_prediction Predict(decimal[] input, bool[]? mask, long nu)
 		{
@@ -226,26 +239,41 @@ namespace LibTopoART
 								invSum += y_F2[i];
 							}
 
-							var discriminationFunction = new SortedDictionary<long, decimal>();
+							// discrimination function: per-class sums in two small parallel buffers
+							var classIDs = new long[neighbouringNodes.Count];
+							var classSums = new decimal[neighbouringNodes.Count];
+							var classNum = 0;
 
 							for(long i = 0; i < neighbouringNodes.Count; ++i) {
 								y_F2[i] /= invSum;
-								if(discriminationFunction.ContainsKey(((TAC_F2_node)neighbouringNodes[(int)i]).ClassID))
-									discriminationFunction[((TAC_F2_node)neighbouringNodes[(int)i]).ClassID] += y_F2[i];
-								else
-									discriminationFunction.Add(((TAC_F2_node)neighbouringNodes[(int)i]).ClassID, y_F2[i]); 
+
+								var currentClassID = ((TAC_F2_node)neighbouringNodes[(int)i]).ClassID;
+								var found = false;
+								for(var j = 0; j < classNum; ++j) {
+									if(classIDs[j] == currentClassID) {
+										classSums[j] += y_F2[i];
+										found = true;
+										break;
+									}
+								}
+								if(!found) {
+									classIDs[classNum] = currentClassID;
+									classSums[classNum] = y_F2[i];
+									++classNum;
+								}
 							}
 
 							confidence = neighbouringNodes[0].Activation;
 
 							var maxDiscriminationValue = 0.0m;
-							foreach(KeyValuePair<long, decimal> pair in discriminationFunction) {
-								if(pair.Value > maxDiscriminationValue) {
-									maxDiscriminationValue = pair.Value;
-									classID = pair.Key;
+							for(var j = 0; j < classNum; ++j) {
+								if((classSums[j] > maxDiscriminationValue) ||
+								   ((classSums[j] == maxDiscriminationValue) && (classIDs[j] < classID))) {
+									maxDiscriminationValue = classSums[j];
+									classID = classIDs[j];
 								}
 							}
-						} 
+						}
 					}
 				}
 
@@ -330,7 +358,7 @@ namespace LibTopoART
 		private const long UNDEFINED = LibTopoART_info.UNDEFINED;
 
 		/// <summary>Instance variable <c>UNDEFINED_CLASS_ID</c> gives the value used for indicating that an input
-		/// sample was predicted to belong to the undefined class; i.e, no class ID was provided for such input samples
+		/// sample was predicted to belong to the undefined class; i.e., no class ID was provided for such input samples
 		/// during training.</summary>
 		public const long UNDEFINED_CLASS_ID = -2;
 
@@ -387,15 +415,27 @@ namespace LibTopoART
 
 		/// <summary>This constructor loads a saved TopoART-C network.</summary>
 		/// <param name="path">The path of a binary TopoART-C file.</param>
-		/// <exception cref="InvalidFileException">Throws when the given file cannot be loaded.</exception>
+		/// <exception cref="InvalidFileException">Thrown when the given file cannot be loaded.</exception>
 		public Fast_TopoART_C(string path)
 		{
 			using var file = File.Open(path, FileMode.Open, FileAccess.Read, FileShare.Read);
+			LoadNetwork(file);
+		}
 
-			var headerInfo = LoadTopoARTParams(file, null, out var outerReader);
-			InitModules(outerReader, headerInfo, LoadTopoARTModule, null, (BinaryReader reader, 
+		/// <summary>This constructor loads a saved TopoART-C network from a stream. The stream is left open.</summary>
+		/// <param name="stream">A readable <c>Stream</c> containing a network in the binary TopoART-C file format.
+		/// </param>
+		/// <exception cref="InvalidFileException">Thrown when the given stream cannot be loaded.</exception>
+		public Fast_TopoART_C(Stream stream)
+		{
+			LoadNetwork(stream);
+		}
+
+		private void LoadNetwork(Stream stream)
+		{
+			using var outerReader = LoadTopoARTParams(stream, null, out var headerInfo);
+			InitModules(outerReader, headerInfo, LoadTopoARTModule, null, (BinaryReader reader,
 				in (FileFormatVersions, bool) localFileFormatInfo) => new FTAC_F2_node(reader, localFileFormatInfo));
-			outerReader.Dispose();
 		}
 
 //----------------------------------------------------------------------------------------------------------------------
@@ -413,7 +453,7 @@ namespace LibTopoART
 		/// <summary>This method performs a single training step and sets the class ID corresponding to
 		/// <paramref name="input"/> to <c>UNDEFINED_CLASS_ID</c>.</summary>
 		/// <param name="input">The input vector to be learnt.</param>
-		public override void Learn(decimal[] input) 
+		public override void Learn(decimal[] input)
 		{
 			var (createFunction, matchFunction) = LearnCommon(UNDEFINED_CLASS_ID);
 			LearnWithMask(input, null, createFunction, matchFunction);
@@ -424,7 +464,7 @@ namespace LibTopoART
 		/// from [0, 255] to [0, 1].</param>
 		/// <param name="classID">The class ID corresponding to <paramref name="input"/>. (must be equal to or larger
 		/// than 0)</param>
-		/// <exception cref="InvalidClassIDException">Throws when <paramref name="classID"/> is less than 0.</exception>
+		/// <exception cref="InvalidClassIDException">Thrown when <paramref name="classID"/> is less than 0.</exception>
 		public void Learn(byte[] input, long classID)
 		{
 			if(classID < 0)
@@ -439,7 +479,7 @@ namespace LibTopoART
 		/// <param name="input">The input vector to be learnt.</param>
 		/// <param name="classID">The class ID corresponding to <paramref name="input"/>. (must be equal to or larger
 		/// than 0)</param>
-		/// <exception cref="InvalidClassIDException">Throws when <paramref name="classID"/> is less than 0.</exception>
+		/// <exception cref="InvalidClassIDException">Thrown when <paramref name="classID"/> is less than 0.</exception>
 		public void Learn(decimal[] input, long classID)
 		{
 			if(classID < 0)
@@ -452,7 +492,7 @@ namespace LibTopoART
 
 		private (CreateF2Node<FTA_F2_node, Vector<int>, long>, MatchFunction<FTA_F2_node, long>) LearnCommon(long classID)
 		{
-			CreateF2Node<FTA_F2_node, Vector<int>, long> createFunction = 
+			CreateF2Node<FTA_F2_node, Vector<int>, long> createFunction =
 				(nodeID, inputLen, spatialWeights, temporalWeights) =>
 				{
 					Debug.Assert(temporalWeights == null);
@@ -508,7 +548,7 @@ namespace LibTopoART
 		/// <param name="input">The input vector the class ID of which is to be predicted. The elements of the input
 		/// vector are internally scaled from [0, 255] to [0, 1].</param>
 		/// <param name="mask">The mask vector corresponding to <paramref name="input"/>.</param>
-		/// <returns> An object of type <c>TopoART_C_prediction</c> containing the predicted class ID and a
+		/// <returns>An object of type <c>TopoART_C_prediction</c> containing the predicted class ID and a
 		/// corresponding confidence value.</returns>
 		public TopoART_C_prediction Predict(byte[] input, bool[]? mask)
 		{
@@ -518,7 +558,7 @@ namespace LibTopoART
 		/// <summary>This method predicts the class ID using the default value of nu.</summary>
 		/// <param name="input">The input vector the class ID of which is to be predicted.</param>
 		/// <param name="mask">The mask vector corresponding to <paramref name="input"/>.</param>
-		/// <returns> An object of type <c>TopoART_C_prediction</c> containing the predicted class ID and a
+		/// <returns>An object of type <c>TopoART_C_prediction</c> containing the predicted class ID and a
 		/// corresponding confidence value.</returns>
 		public TopoART_C_prediction Predict(decimal[] input, bool[]? mask)
 		{
@@ -531,7 +571,7 @@ namespace LibTopoART
 		/// <param name="mask">The mask vector corresponding to <paramref name="input"/>.</param>
 		/// <param name="nu">The maximum cardinality of the set of enclosing categories E and the neighbourhood set N.
 		/// (This parameter does not modify the network. It may be arbitrarily changed in each prediction step.)</param>
-		/// <returns> An object of type <c>TopoART_C_prediction</c> containing the predicted class ID and a
+		/// <returns>An object of type <c>TopoART_C_prediction</c> containing the predicted class ID and a
 		/// corresponding confidence value.</returns>
 		public TopoART_C_prediction Predict(byte[] input, bool[]? mask, long nu)
 		{
@@ -546,7 +586,7 @@ namespace LibTopoART
 		/// <param name="mask">The mask vector corresponding to <paramref name="input"/>.</param>
 		/// <param name="nu">The maximum cardinality of the set of enclosing categories E and the neighbourhood set N.
 		/// (This parameter does not modify the network. It may be arbitrarily changed in each prediction step.)</param>
-		/// <returns> An object of type <c>TopoART_C_prediction</c> containing the predicted class ID and a
+		/// <returns>An object of type <c>TopoART_C_prediction</c> containing the predicted class ID and a
 		/// corresponding confidence value.</returns>
 		public TopoART_C_prediction Predict(decimal[] input, bool[]? mask, long nu)
 		{
@@ -578,7 +618,7 @@ namespace LibTopoART
 					}
 
 					encode();
-					var maskSimd = Common.CreateMaskVectorArray(mask);
+					var maskSimd = ConvertMask(mask);
 
 					if(_modules![ModuleNum - 1].ComputeAlternativeChoiceFunctionsWithMaskAndNu(
 						_x_F1_simd!, maskSimd, nu, out Stack<FTA_F2_node> enclosingNodes, out List<FTA_F2_node> neighbouringNodes)) {
@@ -606,27 +646,44 @@ namespace LibTopoART
 								invSum += y_F2[i];
 							}
 
-							var discriminationFunction = new SortedDictionary<long, decimal>();
+							// discrimination function: per-class sums in two small parallel buffers (at most one
+							// distinct class per neighbouring node)
+							var classIDs = new long[neighbouringNodes.Count];
+							var classSums = new decimal[neighbouringNodes.Count];
+							var classNum = 0;
 
 							for(long i = 0; i < neighbouringNodes.Count; ++i) {
 								y_F2[i] /= invSum;
-								if(discriminationFunction.ContainsKey(((FTAC_F2_node)neighbouringNodes[(int)i]).ClassID))
-									discriminationFunction[((FTAC_F2_node)neighbouringNodes[(int)i]).ClassID] += y_F2[i];
-								else
-									discriminationFunction.Add(((FTAC_F2_node)neighbouringNodes[(int)i]).ClassID, y_F2[i]); 
+
+								var currentClassID = ((FTAC_F2_node)neighbouringNodes[(int)i]).ClassID;
+								var found = false;
+								for(var j = 0; j < classNum; ++j) {
+									if(classIDs[j] == currentClassID) {
+										classSums[j] += y_F2[i];
+										found = true;
+										break;
+									}
+								}
+								if(!found) {
+									classIDs[classNum] = currentClassID;
+									classSums[classNum] = y_F2[i];
+									++classNum;
+								}
 							}
 
 							confidence = (decimal)neighbouringNodes[0].Activation / Common.ScalingFactor;
 
+							// the smallest class ID wins ties, as with the former ascending-key iteration
 							var maxDiscriminationValue = 0.0m;
-							foreach(KeyValuePair<long, decimal> pair in discriminationFunction) {
-								if(pair.Value > maxDiscriminationValue) {
-									maxDiscriminationValue = pair.Value;
-									classID = pair.Key;
+							for(var j = 0; j < classNum; ++j) {
+								if((classSums[j] > maxDiscriminationValue) ||
+								   ((classSums[j] == maxDiscriminationValue) && (classIDs[j] < classID))) {
+									maxDiscriminationValue = classSums[j];
+									classID = classIDs[j];
 								}
 							}
-						} 
-					} 
+						}
+					}
 				}
 
 				return new TopoART_C_prediction(classID, confidence);
@@ -637,7 +694,7 @@ namespace LibTopoART
 
 		private protected override HeaderInfo LoadBinaryHeader(BinaryReader reader)
 		{
-			return Common.LoadBinaryHeader(reader, _networkType, _networkName, new FileFormatVersions(FileFormatVersion, TopoARTFileFormatVersion), 
+			return Common.LoadBinaryHeader(reader, _networkType, _networkName, new FileFormatVersions(FileFormatVersion, TopoARTFileFormatVersion),
 				integerType, floatType);
 		}
 

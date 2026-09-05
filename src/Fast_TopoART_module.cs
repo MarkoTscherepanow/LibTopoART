@@ -10,11 +10,16 @@ namespace LibTopoART
 
 //**********************************************************************************************************************
 
-	internal class Fast_TopoART_module : 
-		ActivationThreadProvider<int, Vector<int>, long, Vector<int>>, 
+	internal class Fast_TopoART_module :
+		ActivationThreadProvider<int, Vector<int>, long, Vector<int>>,
 		ITopoART_module<int, Vector<int>, long, Vector<int>>,
 		IModuleAdaptationStateCheck<Vector<int>>
 	{
+		private const long _serialWorkLimit = 32768;
+
+		// per-node work offset (in SIMD-vector equivalents) accounting for element-count-independent costs
+		private const long _serialPerNodeWorkOffset = 8;
+
 		private protected long _x_F1_len;
 		private protected Vector<int>[]? _x_F1;
 		private protected int _rho;
@@ -61,14 +66,14 @@ namespace LibTopoART
 			_clusterNum = 0;
 			_learningCycles = 0;
 
-			InitThreads();
+			InitThreads(_serialWorkLimit, _serialPerNodeWorkOffset);
 
 			Common.Message(string.Format("Create module (x_F1_len = {0}; rho = {1:0.##########})",
 				_x_F1_len, _rho / (decimal)Common.ScalingFactor));
 		}
 
 		public Fast_TopoART_module(BinaryReader reader, (FileFormatVersions, bool) fileFormatInfo,
-			CreateF2Node<FTA_F2_node, Vector<int>, long>? F2_node_create_func, 
+			CreateF2Node<FTA_F2_node, Vector<int>, long>? F2_node_create_func,
 			LoadF2Node<FTA_F2_node> F2_node_load_func)
 		{
 			CreateF2NodeFunction = F2_node_create_func;
@@ -86,7 +91,7 @@ namespace LibTopoART
 		protected override void Dispose(bool disposing)
 		{
 			if(!_disposed) {
-				if(disposing) 
+				if(disposing)
 					StopThreads();
 				_disposed = true;
 
@@ -128,10 +133,10 @@ namespace LibTopoART
 			_learningCycles = reader.ReadInt64();
 			_nodeNum = reader.ReadInt64();
 
-			InitThreads();
+			InitThreads(_serialWorkLimit, _serialPerNodeWorkOffset);
 		}
 
-		private void LoadNodes(BinaryReader reader, (FileFormatVersions, bool) fileFormatInfo, 
+		private void LoadNodes(BinaryReader reader, (FileFormatVersions, bool) fileFormatInfo,
 			LoadF2Node<FTA_F2_node> F2_node_load_func)
 		{
 			long i;
@@ -153,7 +158,7 @@ namespace LibTopoART
 			}
 		}
 
-		private protected virtual void LoadPrecedingBinaryInformation(BinaryReader reader, 
+		private protected virtual void LoadPrecedingBinaryInformation(BinaryReader reader,
 		 	(FileFormatVersions fileFormatVersions, bool compatibilityMode) fileFormatInfo) {}
 
 //----------------------------------------------------------------------------------------------------------------------
@@ -209,12 +214,12 @@ namespace LibTopoART
 			out Stack<FTA_F2_node>enclosingNodes, out List<FTA_F2_node> neighbouringNodes)
 		{
 			Debug.Assert(nu != 0);
-			
-			enclosingNodes = new Stack<FTA_F2_node>(); 
+
+			enclosingNodes = new Stack<FTA_F2_node>();
 			neighbouringNodes = new List<FTA_F2_node>((int)nu);
 
 			// if no nodes exist
-			if(_nodes == null) 
+			if(_nodes == null)
 				return false;
 
 			RunActivationThreads(0, mask, x_F1, ActivationType.Prediction);
@@ -322,13 +327,15 @@ namespace LibTopoART
 				}
 			}
 
-			result.bm_node_activation /= Common.ScalingFactor;
-			result.bm_permanent_node_activation /= Common.ScalingFactor;
+			if(result.bm_node_ID != LibTopoART_info.UNDEFINED)
+				result.bm_node_activation /= Common.ScalingFactor;
+			if(result.bm_permanent_node_ID != LibTopoART_info.UNDEFINED)
+				result.bm_permanent_node_activation /= Common.ScalingFactor;
 
 			return result;
 		}
 
-		public LearningResult LearnWithMask(Vector<int>[] x_F1_vec, Vector<int>[]? mask, MatchFunction<FTA_F2_node, long>? matchFunction, 
+		public LearningResult LearnWithMask(Vector<int>[] x_F1_vec, Vector<int>[]? mask, MatchFunction<FTA_F2_node, long>? matchFunction,
 			int alpha, int beta_sbm, long phi, bool skipEdgeLearning)
 		{
 			_x_F1 = x_F1_vec;
@@ -371,7 +378,7 @@ namespace LibTopoART
 			if(bmNode == null) {
 				bmNode = AddNode(_x_F1);
 				goto finish;
-			} 
+			}
 
 			bmNode.AdaptWeights(_x_F1, (int)Common.ScalingFactor);
 
@@ -414,7 +421,7 @@ finish:
 
 //----------------------------------------------------------------------------------------------------------------------
 
-		protected void ActivateF3Nodes(long F3_node_num, ref Dictionary<long, FTA_F2_node>? F2_nodes_dictionary, 
+		protected void ActivateF3Nodes(long F3_node_num, ref Dictionary<long, FTA_F2_node>? F2_nodes_dictionary,
 			ref F3_node? F3_nodes)
 		{
 			var F3_nodes_array = new F3_node[F3_node_num];
@@ -430,7 +437,7 @@ finish:
 					if(F3_nodes_array[F2_nodes.ClusterID - 1] == null)
 						F3_nodes_array[F2_nodes.ClusterID - 1] = new F3_node(F2_nodes);
 					else if(F2_nodes.Activation > F3_nodes_array[F2_nodes.ClusterID - 1].Activation)
-						F3_nodes_array[F2_nodes.ClusterID - 1] = new F3_node(F2_nodes); 
+						F3_nodes_array[F2_nodes.ClusterID - 1] = new F3_node(F2_nodes);
 				}
 			}
 
@@ -441,7 +448,7 @@ finish:
 				F3_node? currentNode;
 				F3_node? previousNode;
 
-				for(previousNode = null, currentNode = F3_nodes; currentNode != null; 
+				for(previousNode = null, currentNode = F3_nodes; currentNode != null;
 					previousNode = currentNode, currentNode = currentNode._next) {
 					if(F3_nodes_array[i].Activation > currentNode.Activation)
 						break;
@@ -512,7 +519,7 @@ finish:
 						var (i1, i2) = Common.SimdIndexes<int>(i, _x_F1_len >> 1);
 						writer.Write(_x_F1[i1][i2]);
 					}
-				}	
+				}
 				writer.Write(_rho);
 			}
 

@@ -1,4 +1,5 @@
-﻿using System.Collections.Generic;
+﻿using System;
+using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
 using System.Threading;
@@ -19,7 +20,6 @@ namespace LibTopoART
 		private protected class LearningTaskQueue
 		{
 			public Queue<Task> _tasks = new Queue<Task>();
-			public volatile int _num = 0;
 		}
 
 //----------------------------------------------------------------------------------------------------------------------
@@ -92,21 +92,21 @@ namespace LibTopoART
 						Common.Warning("Too small value for phi, changed to " + tmpPhi);
 					}
 					Common.Message("phi set to " + tmpPhi);
-					if(tmpPhi > (_tau / 10)) 
+					if(tmpPhi > (_tau / 10))
 						Common.Warning("phi might be too large in comparison to tau");
 					_phis ??= new long[ModuleNum];
 					for(long i = 0; i < _phis.LongLength; ++i)
 						_phis[i] = tmpPhi;
 				}
-				else 
+				else
 					Common.Warning("Unable to set phi after training started, keep old value " + Phi);
 			}
 		}
 
 		/// <value>Property <c>Phis</c> constitutes an extension of property <c>Phi</c> that enables individual values
-		/// of phi for each module. By this, the removal of nodes and edges as well as for the propagation of input to
-		/// subsequent TopoART modules can be controlled in a task dependent manner.</value>
-		/// <exception cref="InvalidSizeException">Throws when the array length does not fit the module number.
+		/// of phi for each module. By this, the removal of nodes and edges as well as the propagation of input to
+		/// subsequent TopoART modules can be controlled in a task-dependent manner.</value>
+		/// <exception cref="InvalidSizeException">Thrown when the array length does not fit the module number.
 		/// </exception>
 		public long[] Phis
 		{
@@ -137,7 +137,7 @@ namespace LibTopoART
 								Common.Warning("Too small value for phi_" + subscript + ", changed to " + tmpPhis[i]);
 							}
 							Common.Message("phi_" + subscript + " set to " + tmpPhis[i]);
-							if(tmpPhis[i] > (_tau / 10)) 
+							if(tmpPhis[i] > (_tau / 10))
 								Common.Warning("phi_" + subscript + " might be too large in comparison to tau", VerbosityLevel.Verbose);
 						}
 
@@ -145,7 +145,7 @@ namespace LibTopoART
 					} else {
 						if(_phis != null) {
 							string warning = "Unable to set phis after training started, keep old values " + _phis[0];
-							for(long i = 1; i < _phis.LongLength; ++i) 
+							for(long i = 1; i < _phis.LongLength; ++i)
 								warning += ", " + _phis[i];
 							Common.Warning(warning);
 						} else
@@ -167,7 +167,7 @@ namespace LibTopoART
 						Common.Warning("Too small value for tau, changed to " + Tau);
 					}
 					Common.Message("tau set to " + Tau);
-				} else 
+				} else
 					Common.Warning("Unable to set tau after training started, keep old value " + Tau);
 			}
 		}
@@ -176,18 +176,24 @@ namespace LibTopoART
 
 		private protected static long CheckLength(long length)
 		{
-			return (length < 1) ? 1 : length; 
+			return (length < 1) ? 1 : length;
 		}
 
 //----------------------------------------------------------------------------------------------------------------------
 
 		private protected void CompleteLearningQueue()
 		{
-			while(_learningTasks._tasks.Count > 0 && _learningTasks._tasks.Peek().IsCompleted)
-				_learningTasks._tasks.Dequeue();
-
 			while(_learningTasks._tasks.Count > 0)
 				_learningTasks._tasks.Dequeue().Wait();
+		}
+
+		private protected void CompleteLearningQueueNoThrow()
+		{
+			try {
+				CompleteLearningQueue();
+			} catch(AggregateException e) {
+				Common.Warning("Suppressed exception of a faulted learning task: " + (e.InnerException ?? e).Message);
+			}
 		}
 
 		private protected void Learn(long moduleNum, ModuleFunction moduleFunction)
@@ -205,7 +211,7 @@ namespace LibTopoART
 //----------------------------------------------------------------------------------------------------------------------
 
 		/// <summary>This method resets the adaptation state to <c>AdaptationState.NO_ADAPTATION</c>.</summary>
-		/// <exception cref="InvalidNumberException">Throws when the number of edges of an F2 node is greater than
+		/// <exception cref="InvalidNumberException">Thrown when the number of edges of an F2 node is greater than
 		/// <c>int.MaxValue</c>.</exception>
 		private protected void ResetAdaptationState<TModuleType, TFloatType>(TModuleType[]? modules)
 			where TModuleType : IModuleAdaptationStateCheck<TFloatType>
@@ -216,7 +222,7 @@ namespace LibTopoART
 				CompleteLearningQueue();
 
 				for(long i = 0; i < ModuleNum; ++i)
-					modules![i].ResetAdaptationState(Phis[i]);
+					modules![i].ResetAdaptationState(_phis![i]);
 			}
 		}
 

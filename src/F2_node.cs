@@ -19,7 +19,8 @@ namespace LibTopoART
 		private protected readonly long _inputLen;
 		private protected long _representedInputs;
 		private protected decimal[] _weights;
-		private protected decimal _weightsSum;
+		private protected decimal _weightsSum = UNDEFINED;
+		private protected decimal _sizeCache = UNDEFINED;
 
 		internal TA_F2_node? _next;
 
@@ -33,7 +34,7 @@ namespace LibTopoART
 				var d = _inputLen >> 1;
 				var cog = new decimal[d];
 
-				for(long i = 0; i < d; ++i) 
+				for(long i = 0; i < d; ++i)
 					cog[i] = 0.5m * (_weights[i] + 1.0m - _weights[d + i]);
 
 				return cog;
@@ -59,13 +60,11 @@ namespace LibTopoART
 			_inputLen = inputLen;
 			_representedInputs = 1;
 
-			InitEdges(nodeID); 
+			InitEdges(nodeID);
 
 			_weights = new decimal[_inputLen];
 			for(long i = 0; i < _inputLen; ++i)
 				_weights[i] = initialWeights[i];
-
-			_weightsSum = UNDEFINED;
 
 			Activation = UNDEFINED;
 			MatchValue = UNDEFINED;
@@ -91,8 +90,6 @@ namespace LibTopoART
 			for(long i = 0; i < _inputLen; ++i)
 				_weights[i] = reader.ReadDecimal();
 
-			_weightsSum = UNDEFINED;
-
 			Activation = reader.ReadDecimal();
 			MatchValue = reader.ReadDecimal();
 			ClusterID = reader.ReadInt64();
@@ -113,7 +110,7 @@ namespace LibTopoART
 		public void PrintWeights()
 		{
 			for(long i = 0; i < _inputLen; ++i) {
-				if(i != 0) 
+				if(i != 0)
 					Console.Write(" ");
 				Console.Write(_weights[i]);
 			}
@@ -127,13 +124,24 @@ namespace LibTopoART
 
 		private protected virtual void AdaptWeightsInternal(decimal[] x_F1, decimal beta)
 		{
-			var betaNeg = 1.0m - beta;
-
 			++_representedInputs;
-			for(long i = 0; i < _inputLen; ++i)
-				_weights[i] = beta * (Math.Min(x_F1[i], _weights[i])) + betaNeg * _weights[i];
 
-			_weightsSum = UNDEFINED;
+			if(beta == 1.0m) {
+				for(long i = 0; i < _inputLen; ++i)
+					_weights[i] = Math.Min(x_F1[i], _weights[i]);
+
+				_weightsSum = UNDEFINED;
+				_sizeCache = UNDEFINED;
+			} else if(beta != 0.0m) {
+				var betaNeg = 1.0m - beta;
+
+				// reduce each result to its minimal scale without changing its value
+				for(long i = 0; i < _inputLen; ++i)
+					_weights[i] = (beta * (Math.Min(x_F1[i], _weights[i])) + betaNeg * _weights[i]) / 1.0000000000000000000000000000m;
+
+				_weightsSum = UNDEFINED;
+				_sizeCache = UNDEFINED;
+			}
 		}
 
 		public void ComputeAlternativeChoiceFunction(decimal[] x_F1, bool[]? mask)
@@ -149,11 +157,14 @@ namespace LibTopoART
 			var d = _inputLen >> 1;
 			var diffSum = 0.0m;
 
+			// (x < w) ? w - x : 0 (element-wise) equals abs(min(x, w) - w)
 			if(mask == null) {
 				for(long i = 0; i < _inputLen; ++i) {
-					diffSum += Math.Abs(Math.Min(x_F1[i], _weights[i]) - _weights[i]);
+					if(x_F1[i] < _weights[i])
+						diffSum += _weights[i] - x_F1[i];
 					++i;
-					diffSum += Math.Abs(Math.Min(x_F1[i], _weights[i]) - _weights[i]);
+					if(x_F1[i] < _weights[i])
+						diffSum += _weights[i] - x_F1[i];
 				}
 				Activation = 1.0m - diffSum / d;
 			} else {
@@ -161,13 +172,15 @@ namespace LibTopoART
 
 				for(long i = 0 ; i < d; ++i) {
 					if(mask[i] == false) {
-						diffSum += Math.Abs(Math.Min(x_F1[i], _weights[i]) - _weights[i]);
+						if(x_F1[i] < _weights[i])
+							diffSum += _weights[i] - x_F1[i];
 						++diffNum;
 					}
 				}
 				for(long i = d; i < _inputLen; ++i) {
 					if(mask[i - d] == false) {
-						diffSum += Math.Abs(Math.Min(x_F1[i], _weights[i]) - _weights[i]);
+						if(x_F1[i] < _weights[i])
+							diffSum += _weights[i] - x_F1[i];
 						++diffNum;
 					}
 				}
@@ -305,7 +318,7 @@ namespace LibTopoART
 			writer.Write("\n");
 		}
 
-		private protected virtual void SaveAdditionalText(TextWriter writer) {} 
+		private protected virtual void SaveAdditionalText(TextWriter writer) {}
 
 		public void Save(BinaryWriter writer)
 		{
@@ -324,7 +337,7 @@ namespace LibTopoART
 			SaveAdditionalData(writer);
 		}
 
-		private protected virtual void SaveAdditionalData(BinaryWriter writer) {} 
+		private protected virtual void SaveAdditionalData(BinaryWriter writer) {}
 	}
 
 //**********************************************************************************************************************
@@ -335,13 +348,13 @@ namespace LibTopoART
 
 //----------------------------------------------------------------------------------------------------------------------
 
-		public HTA_F2_node(long nodeID, long inputLen, decimal[] initialWeights, decimal R) 
-			: base(nodeID, inputLen, initialWeights) 
+		public HTA_F2_node(long nodeID, long inputLen, decimal[] initialWeights, decimal R)
+			: base(nodeID, inputLen, initialWeights)
 		{
 			this.R = R;
 		}
 
-		public HTA_F2_node(BinaryReader reader, in FileFormatVersions fileFormatVersions, decimal R) 
+		public HTA_F2_node(BinaryReader reader, in FileFormatVersions fileFormatVersions, decimal R)
 			: base(reader, fileFormatVersions)
 		{
 			this.R = R;
@@ -355,19 +368,25 @@ namespace LibTopoART
 			double squaredSum;
 
 			// compute distance
-			for(i = 0, squaredSum = 0; i < _inputLen - 1; ++i)
-				squaredSum += (double)(x_F1[i] - _weights[i]) * (double)(x_F1[i] - _weights[i]);
+			for(i = 0, squaredSum = 0; i < _inputLen - 1; ++i) {
+				var diff = (double)(x_F1[i] - _weights[i]);
+				squaredSum += diff * diff;
+			}
 
 			var dist = (decimal)Math.Sqrt(squaredSum);
 
 			// adapt centre
-			for(i = 0; i < _inputLen - 1; ++i) {
-				if(dist != 0.0m)
-					_weights[i] += beta / 2.0m * (1.0m - Math.Min(_weights[_inputLen - 1], dist) / dist) * (x_F1[i] - _weights[i]);
+			if(dist != 0.0m) {
+				var factor = beta / 2.0m * (1.0m - Math.Min(_weights[_inputLen - 1], dist) / dist);
+
+				// reduce each result to its minimal scale without changing its value
+				for(i = 0; i < _inputLen - 1; ++i)
+					_weights[i] = (_weights[i] + factor * (x_F1[i] - _weights[i])) / 1.0000000000000000000000000000m;
 			}
 
 			// adapt radius
-			_weights[_inputLen - 1] = _weights[_inputLen - 1] + beta / 2.0m * (Math.Max(_weights[_inputLen - 1], dist) - _weights[_inputLen - 1]);
+			_weights[_inputLen - 1] = (_weights[_inputLen - 1] + beta / 2.0m * (Math.Max(_weights[_inputLen - 1], dist) - _weights[_inputLen - 1]))
+				/ 1.0000000000000000000000000000m;
 
 			++_representedInputs;
 		}
@@ -380,8 +399,10 @@ namespace LibTopoART
 
 			// compute distance
 			if(mask == null) {
-				for(i = 0, squaredSum = 0; i < _inputLen - 1; ++i)
-					squaredSum += (double)(x_F1[i] - _weights[i]) * (double)(x_F1[i] - _weights[i]);
+				for(i = 0, squaredSum = 0; i < _inputLen - 1; ++i) {
+					var diff = (double)(x_F1[i] - _weights[i]);
+					squaredSum += diff * diff;
+				}
 				dist = (decimal)Math.Sqrt(squaredSum);
 				Activation = Math.Max(1.0m - Math.Max(dist - _weights[_inputLen - 1], 0.0m) / (2.0m * R), 0.0m);
 			} else {
@@ -389,7 +410,8 @@ namespace LibTopoART
 
 				for(i = 0, squaredSum = 0; i < _inputLen - 1; ++i) {
 					if(mask[i] == false) {
-						squaredSum += (double)(x_F1[i] - _weights[i]) * (double)(x_F1[i] - _weights[i]);
+						var diff = (double)(x_F1[i] - _weights[i]);
+						squaredSum += diff * diff;
 						++diffNum;
 					}
 				}
@@ -411,12 +433,14 @@ namespace LibTopoART
 			// compute distance
 			if(mask == null) {
 				for(i = 0, squaredSum = 0; i < _inputLen - 1; ++i) {
-					squaredSum += (double)(x_F1[i] - _weights[i]) * (double)(x_F1[i] - _weights[i]);
+					var diff = (double)(x_F1[i] - _weights[i]);
+					squaredSum += diff * diff;
 				}
 			} else {
 				for(i = 0, squaredSum = 0; i < _inputLen - 1; ++i) {
 					if(mask[i] == false) {
-						squaredSum += (double)(x_F1[i] - _weights[i]) * (double)(x_F1[i] - _weights[i]);
+						var diff = (double)(x_F1[i] - _weights[i]);
+						squaredSum += diff * diff;
 					}
 				}
 			}
@@ -439,27 +463,32 @@ namespace LibTopoART
 		public decimal Size
 		{
 			get {
-				long i;
-				decimal size;
-				var d = _inputLen >> 1;
 
-				for(i = 0, size = 0m; i < d; ++i) {
-					size += Math.Abs((1m - _weights[d + i]) - _weights[i]); 
+				if(_sizeCache == LibTopoART_info.UNDEFINED) {
+					long i;
+					decimal size;
+					var d = _inputLen >> 1;
+
+					for(i = 0, size = 0m; i < d; ++i) {
+						size += Math.Abs((1m - _weights[d + i]) - _weights[i]);
+					}
+
+					_sizeCache = size;
 				}
 
-				return size;
+				return _sizeCache;
 			}
 		}
 
 //----------------------------------------------------------------------------------------------------------------------
 
-		public TAC_F2_node(long nodeID, long inputLen, decimal[] initialWeights, long classID) 
-			: base(nodeID, inputLen, initialWeights) 
+		public TAC_F2_node(long nodeID, long inputLen, decimal[] initialWeights, long classID)
+			: base(nodeID, inputLen, initialWeights)
 		{
 			_classID = classID;
 		}
 
-		public TAC_F2_node(BinaryReader reader, in FileFormatVersions fileFormatVersions) 
+		public TAC_F2_node(BinaryReader reader, in FileFormatVersions fileFormatVersions)
 			: base(reader, fileFormatVersions) {}
 
 		private protected override void LoadAdditionalData(BinaryReader reader, in FileFormatVersions fileFormatVersions)
@@ -472,12 +501,12 @@ namespace LibTopoART
 		private protected override void SaveAdditionalText(TextWriter writer)
 		{
 			writer.WriteLine("class ID: " + ClassID);
-		} 
+		}
 
 		private protected override void SaveAdditionalData(BinaryWriter writer)
 		{
 			writer.Write(ClassID);
-		} 
+		}
 	}
 
 //**********************************************************************************************************************
@@ -491,13 +520,13 @@ namespace LibTopoART
 
 //----------------------------------------------------------------------------------------------------------------------
 
-		public HTAC_F2_node(long nodeID, long inputLen, decimal[] initialWeights, decimal R, long classID) 
-			: base(nodeID, inputLen, initialWeights, R) 
+		public HTAC_F2_node(long nodeID, long inputLen, decimal[] initialWeights, decimal R, long classID)
+			: base(nodeID, inputLen, initialWeights, R)
 		{
 			_classID = classID;
 		}
 
-		public HTAC_F2_node(BinaryReader reader, in FileFormatVersions fileFormatVersions, decimal R) 
+		public HTAC_F2_node(BinaryReader reader, in FileFormatVersions fileFormatVersions, decimal R)
 			: base(reader, fileFormatVersions, R) {}
 
 		private protected override void LoadAdditionalData(BinaryReader reader, in FileFormatVersions fileFormatVersions)
@@ -510,12 +539,12 @@ namespace LibTopoART
 		private protected override void SaveAdditionalText(TextWriter writer)
 		{
 			writer.WriteLine("class ID: " + ClassID);
-		} 
+		}
 
 		private protected override void SaveAdditionalData(BinaryWriter writer)
 		{
 			writer.Write(ClassID);
-		} 
+		}
 	}
 
 //**********************************************************************************************************************
