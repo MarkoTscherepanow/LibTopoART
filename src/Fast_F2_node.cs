@@ -9,7 +9,7 @@ namespace LibTopoART
 
 //**********************************************************************************************************************
 
-	internal class FTA_F2_node : 
+	internal class FTA_F2_node :
 		F2_edges,
 		IF2_node_threading<int, Vector<int>, long, Vector<int>>,
 		IF2_node_state<Vector<int>>
@@ -21,7 +21,8 @@ namespace LibTopoART
 		private long _representedInputs;
 		protected Vector<int>[] _weights;
 		protected int _matchValue;
-		private long _weightsSum;
+		private long _weightsSum = UNDEFINED;
+		private protected long _sizeCache = UNDEFINED;
 
 		internal FTA_F2_node? _next;
 
@@ -100,8 +101,6 @@ namespace LibTopoART
 			for(long i = 0; i < initialWeights.LongLength; ++i)
 				_weights[i] = initialWeights[i];
 
-			_weightsSum = UNDEFINED;
-
 			Activation = (int)-Common.ScalingFactor;
 			_matchValue = (int)-Common.ScalingFactor;
 			ClusterID = UNDEFINED;
@@ -140,7 +139,6 @@ namespace LibTopoART
 			}
 
 			_weights = Common.CreateEncodedVectorArray(tmpWeights)!;
-			_weightsSum = UNDEFINED;
 
 			ClusterID = reader.ReadInt64();
 
@@ -160,7 +158,7 @@ namespace LibTopoART
 		public void PrintWeights()
 		{
 			for(long i = 0; i < _inputLen; ++i) {
-				if(i != 0) 
+				if(i != 0)
 					Console.Write(" ");
 				var (i1, i2) = Common.SimdIndexes<int>(i, _inputLen >> 1);
 				Console.Write(_weights[i1][i2] / (decimal)Common.ScalingFactor);
@@ -187,18 +185,24 @@ namespace LibTopoART
 #endif
 
 			++_representedInputs;
-			for(long i = 0; i < x_F1.LongLength; ++i) {
-				Vector.Widen(Vector.Min(x_F1[i], _weights[i]), out Vector<long> tmp1, out Vector<long> tmp2);
-				tmp1 = (tmp1 * beta) / Common.ScalingVectorLong;
-				tmp2 = (tmp2 * beta) / Common.ScalingVectorLong;
-				Vector<int> tmp = Vector.Narrow(tmp1, tmp2);
-				Vector.Widen(_weights[i], out tmp1, out tmp2);
-				tmp1 = (tmp1 * betaNeg) / Common.ScalingVectorLong;
-				tmp2 = (tmp2 * betaNeg) / Common.ScalingVectorLong;
-				_weights[i] = tmp + Vector.Narrow(tmp1, tmp2);
+			if(beta == (int)Common.ScalingFactor) {
+				for(long i = 0; i < x_F1.LongLength; ++i)
+					_weights[i] = Vector.Min(x_F1[i], _weights[i]);
+			} else if(beta != 0) {
+				for(long i = 0; i < x_F1.LongLength; ++i) {
+					Vector.Widen(Vector.Min(x_F1[i], _weights[i]), out Vector<long> tmp1, out Vector<long> tmp2);
+					tmp1 = (tmp1 * beta) / Common.ScalingVectorLong;
+					tmp2 = (tmp2 * beta) / Common.ScalingVectorLong;
+					Vector<int> tmp = Vector.Narrow(tmp1, tmp2);
+					Vector.Widen(_weights[i], out tmp1, out tmp2);
+					tmp1 = (tmp1 * betaNeg) / Common.ScalingVectorLong;
+					tmp2 = (tmp2 * betaNeg) / Common.ScalingVectorLong;
+					_weights[i] = tmp + Vector.Narrow(tmp1, tmp2);
+				}
 			}
 
 			_weightsSum = UNDEFINED;
+			_sizeCache = UNDEFINED;
 
 #if DEBUG
 			(i1, i2) = Common.SimdIndexes<int>(d - 1, d);
@@ -223,31 +227,41 @@ namespace LibTopoART
 
 			if(mask == null) {
 				var d = _inputLen >> 1;
+				var diffSumLow = Vector<long>.Zero;
+				var diffSumHigh = Vector<long>.Zero;
 
 				for(long i = 0; i < dSimd; ++i) {
-					Vector<int> diffVec = Vector.Abs(Vector.Min(x_F1[i], _weights[i]) - _weights[i]) +
-												Vector.Abs(Vector.Min(x_F1[i + dSimd], _weights[i + dSimd]) - _weights[i + dSimd]);
-					for(int j = 0; j < Vector<int>.Count; ++j) 
-						diffSum += diffVec[j];
+					// equal to Abs(Min(x, w) - w); i.e., the |x∧w - w| form of the definition
+					Vector<int> diffVec = Vector.Max(_weights[i] - x_F1[i], Vector<int>.Zero) +
+												Vector.Max(_weights[i + dSimd] - x_F1[i + dSimd], Vector<int>.Zero);
+					Vector.Widen(diffVec, out Vector<long> low, out Vector<long> high);
+					diffSumLow += low;
+					diffSumHigh += high;
 				}
+				diffSum = Common.HorizontalSum(diffSumLow + diffSumHigh);
 
 				Activation = (int)(Common.ScalingFactor - diffSum / d);
 			} else {
 				long diffNum = 0;
 				Vector<int> maskDiffVec = Vector<int>.Zero;
+				var diffSumLow = Vector<long>.Zero;
+				var diffSumHigh = Vector<long>.Zero;
 
 				for(long i = 0; i < dSimd; ++i) {
-					var diffVec = Vector.BitwiseAnd(Vector.Abs(Vector.Min(x_F1[i], _weights[i]) - _weights[i]), mask[i]) +
-												Vector.BitwiseAnd(Vector.Abs(Vector.Min(x_F1[i + dSimd], _weights[i + dSimd]) - _weights[i + dSimd]), mask[i]);
+					// masked variant of Max(w - x, 0); see the comment in the unmasked branch above
+					var diffVec = Vector.BitwiseAnd(Vector.Max(_weights[i] - x_F1[i], Vector<int>.Zero), mask[i]) +
+												Vector.BitwiseAnd(Vector.Max(_weights[i + dSimd] - x_F1[i + dSimd], Vector<int>.Zero), mask[i]);
 					maskDiffVec += mask[i];
-					for(var j = 0; j < Vector<int>.Count; ++j)
-						diffSum += diffVec[j];
+					Vector.Widen(diffVec, out Vector<long> low, out Vector<long> high);
+					diffSumLow += low;
+					diffSumHigh += high;
 				}
+				diffSum = Common.HorizontalSum(diffSumLow + diffSumHigh);
 
 				for(var j = 0; j < Vector<int>.Count; ++j)
 					diffNum -= maskDiffVec[j];
 
-				Activation = (int)((diffNum == 0) ? -Common.ScalingFactor : 
+				Activation = (int)((diffNum == 0) ? -Common.ScalingFactor :
 								   (Common.ScalingFactor - diffSum / diffNum));
 			}
 			_matchValue = (int)-Common.ScalingFactor;
@@ -266,27 +280,38 @@ namespace LibTopoART
 			Debug.Assert(x_F1.LongLength == _weights.LongLength);
 			Debug.Assert(x_F1.LongLength == Common.SimdLengthEncoded<int>(_inputLen));
 
-			long minSum = 0;
 			var inputLenSimd = x_F1.LongLength;
 			var dSimd = inputLenSimd >> 1;
 
+			var minSumLow = Vector<long>.Zero;
+			var minSumHigh = Vector<long>.Zero;
+
 			if(_weightsSum == UNDEFINED) {
-				_weightsSum = 0;
+				var weightsSumLow = Vector<long>.Zero;
+				var weightsSumHigh = Vector<long>.Zero;
+
 				for(long i = 0; i < dSimd; ++i) {
 					Vector<int> weightsVec = _weights[i] + _weights[i + dSimd];
 					Vector<int> minVec = Vector.Min(x_F1[i], _weights[i]) + Vector.Min(x_F1[i + dSimd], _weights[i + dSimd]);
-					for(var j = 0; j < Vector<int>.Count; ++j) {
-						_weightsSum += weightsVec[j];
-						minSum += minVec[j];
-					}
+					Vector.Widen(weightsVec, out Vector<long> low, out Vector<long> high);
+					weightsSumLow += low;
+					weightsSumHigh += high;
+					Vector.Widen(minVec, out low, out high);
+					minSumLow += low;
+					minSumHigh += high;
 				}
+
+				_weightsSum = Common.HorizontalSum(weightsSumLow + weightsSumHigh);
 			} else {
 				for(long i = 0; i < dSimd; ++i) {
 					var minVec = Vector.Min(x_F1[i], _weights[i]) + Vector.Min(x_F1[i + dSimd], _weights[i + dSimd]);
-					for(var j = 0; j < Vector<int>.Count; ++j)
-						minSum += minVec[j];
+					Vector.Widen(minVec, out Vector<long> low, out Vector<long> high);
+					minSumLow += low;
+					minSumHigh += high;
 				}
 			}
+
+			long minSum = Common.HorizontalSum(minSumLow + minSumHigh);
 
 			var normedMinSum = (minSum / _inputLen) * Common.ScalingFactor;		// scale to constrain the maximum value
 			Activation = (int)(normedMinSum / (alpha + _weightsSum) * _inputLen);  	// rescale
@@ -296,11 +321,13 @@ namespace LibTopoART
 				_matchValue 	=	(int)(normedMinSum / x_F1_sum * _inputLen);
 			} else {
 				long partial_x_F1_sum_false = 0;
-				long partialMinSumFalse = 0;
 				long partial_x_F1_sum_true = 0;
-				long partialMinSumTrue = 0;
 				Vector<int> falseVec = Vector<int>.Zero;
 				Vector<int> trueVec = Vector<int>.Zero;
+				var falseMinSumLow = Vector<long>.Zero;
+				var falseMinSumHigh = Vector<long>.Zero;
+				var trueMinSumLow = Vector<long>.Zero;
+				var trueMinSumHigh = Vector<long>.Zero;
 
 				for(long i = 0; i < dSimd; ++i) {
 					var maskComplement = Vector.OnesComplement(mask[i]);
@@ -315,11 +342,16 @@ namespace LibTopoART
 					var trueMinVec = Vector.BitwiseAnd(minVec1, maskComplement) +
 													Vector.BitwiseAnd(minVec2, maskComplement);
 
-					for(var j = 0; j < Vector<int>.Count; ++j) {
-						partialMinSumFalse += falseMinVec[j];
-						partialMinSumTrue += trueMinVec[j];
-					}
+					Vector.Widen(falseMinVec, out Vector<long> low, out Vector<long> high);
+					falseMinSumLow += low;
+					falseMinSumHigh += high;
+					Vector.Widen(trueMinVec, out low, out high);
+					trueMinSumLow += low;
+					trueMinSumHigh += high;
 				}
+
+				long partialMinSumFalse = Common.HorizontalSum(falseMinSumLow + falseMinSumHigh);
+				long partialMinSumTrue = Common.HorizontalSum(trueMinSumLow + trueMinSumHigh);
 
 				for(var j = 0; j < Vector<int>.Count; ++j) {
 					partial_x_F1_sum_false -= falseVec[j];
@@ -416,7 +448,7 @@ namespace LibTopoART
 			writer.Write("\n");
 		}
 
-		protected virtual void SaveAdditionalText(TextWriter writer) {} 
+		protected virtual void SaveAdditionalText(TextWriter writer) {}
 
 		public virtual void Save(BinaryWriter writer, bool compatibilityMode)
 		{
@@ -446,7 +478,7 @@ namespace LibTopoART
 			SaveAdditionalData(writer);
 		}
 
-		protected virtual void SaveAdditionalData(BinaryWriter writer) {} 
+		protected virtual void SaveAdditionalData(BinaryWriter writer) {}
 	}
 
 //**********************************************************************************************************************
@@ -474,7 +506,7 @@ namespace LibTopoART
 
 			// ensure forward search
 			if(otherNode._temporalWeights[0] > _temporalWeights[0]) {
-				result = (otherNode._temporalWeights[0] - _temporalWeights[0] + 
+				result = (otherNode._temporalWeights[0] - _temporalWeights[0] +
 						 Math.Abs(otherNode._temporalWeights[1] - _temporalWeights[1])) /
 						 (decimal)Common.ScalingFactor;
 			} else
@@ -491,7 +523,7 @@ namespace LibTopoART
 
 //----------------------------------------------------------------------------------------------------------------------
 
-		public FETA_F2_node(long nodeID, long inputLen, long t_max, Vector<int>[] initialSpatialWeights, 
+		public FETA_F2_node(long nodeID, long inputLen, long t_max, Vector<int>[] initialSpatialWeights,
 			long[] initialTemporalWeights)
 			: base(nodeID, inputLen, initialSpatialWeights)
 		{
@@ -503,7 +535,7 @@ namespace LibTopoART
 			_combinedMatchValue	=	(int)-Common.ScalingFactor;
 		}
 
-		public FETA_F2_node(BinaryReader reader, (FileFormatVersions fileFormatVersions, bool compatibilityMode) fileFormatInfo, long t_max) 
+		public FETA_F2_node(BinaryReader reader, (FileFormatVersions fileFormatVersions, bool compatibilityMode) fileFormatInfo, long t_max)
 			: base(reader, fileFormatInfo)
 		{
 			if(fileFormatInfo.fileFormatVersions.FileFormatVersion == 0.01m)
@@ -534,10 +566,10 @@ namespace LibTopoART
 		{
 			Debug.Assert(t_F1 != null);
 
-			_temporalMatchValue = (t_F1 != null) ? (int)((_t_max - Math.Min(t_F1[1] - _temporalWeights[0], _t_max)) / 
+			_temporalMatchValue = (t_F1 != null) ? (int)((_t_max - Math.Min(t_F1[1] - _temporalWeights[0], _t_max)) /
 										   (_t_max / Common.ScalingFactor)) : (int)LibTopoART_info.UNDEFINED;
 
-			if(_temporalMatchValue != 0) 
+			if(_temporalMatchValue != 0)
 				ComputeSpatialChoiceAndMatchFunction(x_F1, mask, alpha);
 			else
 			{
@@ -553,8 +585,12 @@ namespace LibTopoART
 		public void AdaptWeights(Vector<int>[] x_F1, long[] t_F1, int beta)
 		{
 			AdaptWeights(x_F1, beta);
-			_temporalWeights[1] = (long)((beta * (decimal)(Math.Max(t_F1[1], _temporalWeights[1]))
-				+ (Common.ScalingFactor - beta) * (decimal)_temporalWeights[1]) / Common.ScalingFactor);
+
+			if(beta == (int)Common.ScalingFactor)
+				_temporalWeights[1] = Math.Max(t_F1[1], _temporalWeights[1]);
+			else if(beta != 0)
+				_temporalWeights[1] = (long)((beta * (decimal)(Math.Max(t_F1[1], _temporalWeights[1]))
+					+ (Common.ScalingFactor - beta) * (decimal)_temporalWeights[1]) / Common.ScalingFactor);
 		}
 
 		public override decimal[] GetCopyOfTemporalWeights()
@@ -626,28 +662,36 @@ namespace LibTopoART
 		public long Size
 		{
 			get {
-				var dSimd = _weights.LongLength >> 1;
 
-				Debug.Assert(dSimd == Common.SimdLength<int>(_inputLen >> 1));
+				if(_sizeCache == LibTopoART_info.UNDEFINED) {
+					var dSimd = _weights.LongLength >> 1;
 
-				long size = 0;
-				for(long i = 0; i < dSimd; ++i) {
-					var absVec = Vector.Abs((Common.ScalingVectorInt - _weights[dSimd + i]) - _weights[i]);
-					for(var j = 0; j < Vector<int>.Count; ++j)
-						size += absVec[j];
+					Debug.Assert(dSimd == Common.SimdLength<int>(_inputLen >> 1));
+
+					var sizeLow = Vector<long>.Zero;
+					var sizeHigh = Vector<long>.Zero;
+					for(long i = 0; i < dSimd; ++i) {
+						var absVec = Vector.Abs((Common.ScalingVectorInt - _weights[dSimd + i]) - _weights[i]);
+						Vector.Widen(absVec, out Vector<long> low, out Vector<long> high);
+						sizeLow += low;
+						sizeHigh += high;
+					}
+					long size = Common.HorizontalSum(sizeLow + sizeHigh);
+
+					// correction for the additional elements of the final Vector<int>
+					size -= (dSimd * Vector<int>.Count - (_inputLen >> 1)) * Common.ScalingFactor;
+
+					_sizeCache = size;
 				}
 
-				// correction for the additional elements of the final Vector<int>
-				size -= (dSimd * Vector<int>.Count - (_inputLen >> 1)) * Common.ScalingFactor;
-
-				return size;
+				return _sizeCache;
 			}
 		}
 
 //----------------------------------------------------------------------------------------------------------------------
 
-		public FTAC_F2_node(long nodeID, long input_len, Vector<int>[] initialWeights, long classID) 
-			: base(nodeID, input_len, initialWeights) 
+		public FTAC_F2_node(long nodeID, long input_len, Vector<int>[] initialWeights, long classID)
+			: base(nodeID, input_len, initialWeights)
 		{
 			_classID = classID;
 		}
@@ -665,12 +709,12 @@ namespace LibTopoART
 		protected override void SaveAdditionalText(TextWriter writer)
 		{
 			writer.WriteLine("class ID: " + ClassID);
-		} 
+		}
 
 		protected override void SaveAdditionalData(BinaryWriter writer)
 		{
 			writer.Write(ClassID);
-		} 
+		}
 	}
 
 //**********************************************************************************************************************

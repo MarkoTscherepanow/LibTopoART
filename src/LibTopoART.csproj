@@ -8,8 +8,8 @@
     <PackageIcon>logo.png</PackageIcon>
     <PackageReadmeFile>readme.md</PackageReadmeFile>
     <PackageLicenseExpression>MIT</PackageLicenseExpression>
-    <PackageReleaseNotes>Version 1.0.0 contains full implementations of the basic TopoART networks.</PackageReleaseNotes>
-    <Description>LibTopoART provides C# implementations of several TopoART neural networks which are suited to problems such as online-learning, lifelong learning from data streams, as well as incremental learning and prediction from non-stationary data, noisy data, imbalanced data, and incomplete data.</Description>
+    <PackageReleaseNotes>In version 1.1.0, the implementations of the basic TopoART networks have been optimized and refactored. Furthermore, the interface ITopoART_base_stream has been added to enable networks to be read from and written to streams.</PackageReleaseNotes>
+    <Description>LibTopoART provides C# implementations of several TopoART neural networks that are suited to problems such as online-learning, lifelong learning from data streams, as well as incremental learning and prediction from non-stationary data, noisy data, imbalanced data, and incomplete data.</Description>
     <Copyright>© Marko Tscherepanow. All rights reserved.</Copyright>
     <SignAssembly>true</SignAssembly>
     <AssemblyOriginatorKeyFile>LibTopoART.snk</AssemblyOriginatorKeyFile>
@@ -18,7 +18,7 @@
     <DebugType>embedded</DebugType>
     <Nullable>Enable</Nullable>
     <LangVersion>latest</LangVersion>
-    <ReleaseVersion>1.0.0</ReleaseVersion>
+    <ReleaseVersion>1.1.0</ReleaseVersion>
     <PackageVersion>$(ReleaseVersion)</PackageVersion>
     <Version>$(ReleaseVersion)</Version>
     <EnablePackageValidation>true</EnablePackageValidation>

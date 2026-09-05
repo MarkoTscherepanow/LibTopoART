@@ -61,9 +61,9 @@ namespace LibTopoART
 
 #if DEBUG
 	/// <summary>Class <c>Snapshot</c> stores a snapshot of the nodes and edges of a TopoART network.</summary>
-	public class Snapshot<TSpatialWeightType> 
+	public class Snapshot<TSpatialWeightType>
 #else
-	internal class Snapshot<TSpatialWeightType> 
+	internal class Snapshot<TSpatialWeightType>
 #endif
 	{
 		private readonly Dictionary<(long, long), EdgeDescriptor> _edgeMap;
@@ -75,7 +75,7 @@ namespace LibTopoART
 		public Dictionary<(long, long), EdgeDescriptor> EdgeMap { get => _edgeMap; }
 
 #if DEBUG
-		/// <value>Property <c>NodeMap</c> represents a dictionary containing all nodes.</value>
+		/// <value>Property <c>NodeMap</c> provides a dictionary containing all nodes.</value>
 #endif
 		public Dictionary<long, NodeDescriptor<TSpatialWeightType>> NodeMap
 		{
@@ -84,10 +84,10 @@ namespace LibTopoART
 		}
 
 #if DEBUG
-		/// <summary>This constructor initialises an instance of struct <c>Snapshot</c>.</summary>
+		/// <summary>This constructor initialises an instance of class <c>Snapshot</c>.</summary>
 		/// <param name="nodeState">Interface <c>NodeState</c> of the first node to be stored.</param>
 		/// <param name="phi">The value of phi to be used.</param>
-		/// <exception cref="InvalidNumberException">Throws when the number of edges of an F2 node is greater than
+		/// <exception cref="InvalidNumberException">Thrown when the number of edges of an F2 node is greater than
 		/// <c>int.MaxValue</c>.</exception>
 #endif
 		public Snapshot(IF2_node_state<TSpatialWeightType>? nodeState, long phi)
@@ -117,14 +117,14 @@ namespace LibTopoART
 		}
 
 #if DEBUG
-		/// <summary>This method compares the current instance of struct <c>Snapshot</c> to another one.</summary>
-		/// <param name="other">The instance of struct <c>Snapshot</c> the current instance is compared to.</param>
+		/// <summary>This method compares the current instance of class <c>Snapshot</c> to another one.</summary>
+		/// <param name="other">The instance of class <c>Snapshot</c> the current instance is compared to.</param>
 		/// <param name="weightCmpFunction">Function to be used for the comparison of single weights.</param>
-		/// <exception cref="InvalidStateException">Throws when the network is in an invalid state. This happens if a
+		/// <exception cref="InvalidStateException">Thrown when the network is in an invalid state. This happens if a
 		/// permanent node or an edge between two permanent nodes of <c>this</c> is not present in
 		/// <paramref name="other"/>.</exception>
 #endif
-		public AdaptationState CompareTo(Snapshot<TSpatialWeightType> other, 
+		public AdaptationState CompareTo(Snapshot<TSpatialWeightType> other,
 										 CompareWeights<TSpatialWeightType> weightCmpFunction)
 		{
 			var state = AdaptationState.NO_ADAPTATION;
@@ -157,10 +157,10 @@ namespace LibTopoART
 					throw new InvalidStateException(Common.InvalidStateException_InvalidNetworkState);
 			}
 
-			var tmpEdgeMap = _edgeMap == null ? new Dictionary<(long, long), EdgeDescriptor>() : 
+			var tmpEdgeMap = _edgeMap == null ? new Dictionary<(long, long), EdgeDescriptor>() :
 				new Dictionary<(long, long), EdgeDescriptor>(_edgeMap);
 
-			var tmpOtherEdgeMap = other?._nodeMap == null ? new Dictionary<(long, long), EdgeDescriptor>() :
+			var tmpOtherEdgeMap = other?._edgeMap == null ? new Dictionary<(long, long), EdgeDescriptor>() :
 				new Dictionary<(long, long), EdgeDescriptor>(other._edgeMap);
 
 			foreach(KeyValuePair<(long, long), EdgeDescriptor> pair in tmpOtherEdgeMap) {

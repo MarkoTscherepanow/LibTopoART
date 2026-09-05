@@ -2,7 +2,7 @@
 *                                                    TopoART class                                                     *
 *                                      created by Marko Tscherepanow, 12 June 2011                                     *
 ************************************************************************************************************************
-*                                $Id: Fast_TopoART.cs 1604 2024-12-21 12:54:31Z marko $                                *
+*                                $Id: Fast_TopoART.cs 1832 2026-07-17 06:24:27Z marko $                                *
 ***********************************************************************************************************************/
 
 using System.Numerics;
@@ -23,7 +23,7 @@ namespace LibTopoART
 	/// but less accurate. As a consequence, the results may differ slightly from class <c>TopoART</c>.</para>
 	/// <para>Class <c>Fast_TopoART</c> requires all input to lie in the interval [0, 1].</para>
 	/// </summary>
-	public class Fast_TopoART : Fast_TopoART_base 
+	public class Fast_TopoART : Fast_TopoART_base
 	{
 		private const string _networkName = "TopoART";
 		private const NetworkType _networkType = NetworkType.TopoART;
@@ -41,7 +41,7 @@ namespace LibTopoART
 			return new Fast_TopoART_module(reader, fileFormatInfo, F2_node_create_func, F2_node_load_func);
 		}
 
-		private protected FTA_F2_node CreateTopoARTF2Node(long nodeID, long inputLen, Vector<int>[] spatialWeights, 
+		private protected FTA_F2_node CreateTopoARTF2Node(long nodeID, long inputLen, Vector<int>[] spatialWeights,
 			long[]? temporalWeights)
 		{
 			Debug.Assert(temporalWeights == null);
@@ -70,14 +70,25 @@ namespace LibTopoART
 
 		/// <summary>This constructor loads a saved TopoART network.</summary>
 		/// <param name="path">The path of a binary TopoART file.</param>
-		/// <exception cref="InvalidFileException">Throws when the given file cannot be loaded.</exception>
+		/// <exception cref="InvalidFileException">Thrown when the given file cannot be loaded.</exception>
 		public Fast_TopoART(string path)
 		{
 			using var file = File.Open(path, FileMode.Open, FileAccess.Read, FileShare.Read);
+			LoadNetwork(file);
+		}
 
-			var headerInfo = LoadTopoARTParams(file, TopoARTMatchFunction, out var reader);
+		/// <summary>This constructor loads a saved TopoART network from a stream. The stream is left open.</summary>
+		/// <param name="stream">A readable <c>Stream</c> containing a network in the binary TopoART file format.</param>
+		/// <exception cref="InvalidFileException">Thrown when the given stream cannot be loaded.</exception>
+		public Fast_TopoART(Stream stream)
+		{
+			LoadNetwork(stream);
+		}
+
+		private void LoadNetwork(Stream stream)
+		{
+			using var reader = LoadTopoARTParams(stream, TopoARTMatchFunction, out var headerInfo);
 			InitModules(reader, headerInfo, LoadTopoARTModule, CreateTopoARTF2Node, LoadTopoARTF2Node);
-			reader.Dispose();
 		}
 
 //----------------------------------------------------------------------------------------------------------------------
@@ -126,11 +137,11 @@ namespace LibTopoART
 					if(lr == LearningResult.PropagateFurther) {
 						if(createFunction != null)
 							_modules![m].CreateF2NodeFunction = createFunction;
-						lr = _modules![m].LearnWithMask(input, mask, matchFunction ?? TopoARTMatchFunction, _alpha, _beta_sbm, Phis[m], _skipEdgeLearning);
+						lr = _modules![m].LearnWithMask(input, mask, matchFunction ?? TopoARTMatchFunction, _alpha, _beta_sbm, _phis![m], _skipEdgeLearning);
 					}
 
-					if((_modules![m].LearningCycles % Tau) == 0)
-						_modules![m].RemoveNodeCandidates(Phis[m]);
+					if((_modules![m].LearningCycles != 0) && ((_modules![m].LearningCycles % Tau) == 0))
+						_modules![m].RemoveNodeCandidates(_phis![m]);
 			});
 		}
 

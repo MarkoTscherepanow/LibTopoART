@@ -7,10 +7,11 @@ using System.Numerics;
 using System.Threading.Tasks;
 using System.IO.Compression;
 using System.Runtime.CompilerServices;
+using System.Text;
 
 // Public Key Token: 21f0a892fb9d8265
 [assembly: InternalsVisibleTo("LibTopoART.Compatibility, PublicKey=" +
-    "00240000048000009400000006020000002400005253413100040000010001005d7e23e3ccb668" +
+	"00240000048000009400000006020000002400005253413100040000010001005d7e23e3ccb668" +
 	"1ff96065876df14e4d0b567976dd410a56294fab7e8767084b13f4862c53ae12f5dc2682fee73a" +
 	"d2de564fd1b8b6d5ce4f11b445c0fcd6dd2305cc76cf05db97bd741237e133b91c339b44edf036" +
 	"6a23c0f7a8f3da64ff66bb0e2976cf7aac557cf64c7739fa303ab654d8aa66c1dd53670808f972" +
@@ -28,14 +29,14 @@ namespace LibTopoART
 		Prediction
 	}
 
-	internal enum LearningResult 
+	internal enum LearningResult
 	{
 		DoNotPropagate,
 		PropagateFurther
 	}
 
 #if DEBUG
-	/// <summary>Enumeration specifying save flags</summary>
+	/// <summary>Enumeration specifying save flags.</summary>
 	[Flags]
 	public enum SaveFlags : uint
 #else
@@ -48,10 +49,10 @@ namespace LibTopoART
 	}
 
 #if DEBUG
-	/// <summary>Enumeration specifying types of possible neural networks</summary>
-	public enum NetworkType : uint 
+	/// <summary>Enumeration specifying types of possible neural networks.</summary>
+	public enum NetworkType : uint
 #else
-	internal enum NetworkType : uint 
+	internal enum NetworkType : uint
 #endif
 	{
 		NotSet					=	0x000000,
@@ -72,11 +73,11 @@ namespace LibTopoART
 	}
 
 #if DEBUG
-	/// <summary>Enumeration specifying possible integer and floating point types. The values are 
+	/// <summary>Enumeration specifying possible integer and floating point types. The values are
 	/// indexes to <c>Common.types.</c></summary>
-	public enum TypeIndex : uint 
+	public enum TypeIndex : uint
 #else
-	internal enum TypeIndex : uint 
+	internal enum TypeIndex : uint
 #endif
 	{
 		SbyteIndex		=	0,
@@ -185,14 +186,14 @@ namespace LibTopoART
 #endif
 
 	internal delegate TModuleType CreateModule<TModuleType, TNodeType,  TFloatType, TSpatialWeightType,
-		TTemporalWeightType>(long inputLen, TFloatType rho, 
+		TTemporalWeightType>(long inputLen, TFloatType rho,
 		 CreateF2Node<TNodeType, TSpatialWeightType, TTemporalWeightType>? F2_node_create_func);
 	internal delegate TModuleType LoadModule<TModuleType, TNodeType, TSpatialWeightType, TTemporalWeightType>
 		(BinaryReader reader, in (FileFormatVersions, bool) fileFormatInfo,
 		 CreateF2Node<TNodeType, TSpatialWeightType, TTemporalWeightType>? F2_node_create_func,
 		 LoadF2Node<TNodeType> F2_node_load_func);
-	internal delegate TNodeType CreateF2Node<TNodeType, TSpatialWeightType, TTemporalWeightType> 
-		(long nodeID, long inputLen, TSpatialWeightType[] spatialWeights, 
+	internal delegate TNodeType CreateF2Node<TNodeType, TSpatialWeightType, TTemporalWeightType>
+		(long nodeID, long inputLen, TSpatialWeightType[] spatialWeights,
 		 TTemporalWeightType[]? temporalWeights);
 
 	internal delegate TNodeType LoadF2Node<TNodeType>(BinaryReader reader, in (FileFormatVersions, bool) fileFormatInfo);
@@ -209,6 +210,10 @@ namespace LibTopoART
 		private readonly IF2_node_threading<TFloatType, TSpatialWeightType, TTemporalWeightType, TMaskType>?[] _threadArray =
 			new IF2_node_threading<TFloatType, TSpatialWeightType, TTemporalWeightType, TMaskType>[LibTopoART_info.MaximumThreads];
 		private readonly Task[] _tasks = new Task[LibTopoART_info.MaximumThreads];
+
+		private long _threadNodeNum;
+		private long _serialWorkLimit;
+		private long _serialPerNodeWorkOffset;
 
 		private bool _isActive;
 		private bool _disposed;
@@ -245,8 +250,10 @@ namespace LibTopoART
 
 //----------------------------------------------------------------------------------------------------------------------
 
-		protected void InitThreads() 
+		protected void InitThreads(long serialWorkLimit = 0, long serialPerNodeWorkOffset = 0)
 		{
+			_serialWorkLimit = serialWorkLimit;
+			_serialPerNodeWorkOffset = serialPerNodeWorkOffset;
 			_isActive = true;
 		}
 
@@ -259,6 +266,7 @@ namespace LibTopoART
 				newNode.ThreadNext = _threadArray[threadID];
 				newNode.ThreadID = threadID;
 				_threadArray[threadID] = newNode;
+				++_threadNodeNum;
 			}
 		}
 
@@ -273,21 +281,50 @@ namespace LibTopoART
 
 				if(node.ThreadNext != null)
 					node.ThreadNext.ThreadPrev = node.ThreadPrev;
+
+				--_threadNodeNum;
 			}
 		}
 
-		protected void RunActivationThreads(TFloatType alpha, TMaskType[]? mask, TSpatialWeightType[] x_F1_vec, 
+		protected void RunActivationThreads(TFloatType alpha, TMaskType[]? mask, TSpatialWeightType[] x_F1_vec,
 											ActivationType actType = ActivationType.Training)
 		{
 			RunActivationThreads(alpha, mask, x_F1_vec, null, actType);
 		}
 
-		protected void RunActivationThreads(TFloatType alpha, TMaskType[]? mask, TSpatialWeightType[] x_F1_vec, 
+		protected void RunActivationThreads(TFloatType alpha, TMaskType[]? mask, TSpatialWeightType[] x_F1_vec,
 											TTemporalWeightType[]? t_F1_vec, ActivationType actType = ActivationType.Training)
 		{
 			if(_isActive) {
+				// serial path for small workloads
+				if(_threadNodeNum * (x_F1_vec.LongLength + _serialPerNodeWorkOffset) <= _serialWorkLimit) {
+					switch(actType) {
+						case ActivationType.Training:
+								for(long currentTask = 0; currentTask < LibTopoART_info.MaximumThreads; ++currentTask) {
+									for(var currentNode = _threadArray[currentTask]; currentNode != null; currentNode = currentNode.ThreadNext)
+										currentNode.ComputeChoiceAndMatchFunction(x_F1_vec, t_F1_vec, mask, alpha);
+								}
+							break;
+						case ActivationType.Prediction:
+								for(long currentTask = 0; currentTask < LibTopoART_info.MaximumThreads; ++currentTask) {
+									for(var currentNode = _threadArray[currentTask]; currentNode != null; currentNode = currentNode.ThreadNext)
+										currentNode.ComputeAlternativeChoiceFunction(x_F1_vec, mask);
+								}
+							break;
+					}
+
+					return;
+				}
+
 				for(long currentTask = 0; currentTask < LibTopoART_info.MaximumThreads; ++currentTask) {
 					var currentTaskNode = _threadArray[currentTask];
+
+					// skip empty node lists
+					if(currentTaskNode == null) {
+						_tasks[currentTask] = Task.CompletedTask;
+						continue;
+					}
+
 					switch(actType) {
 						case ActivationType.Training:
 								_tasks[currentTask] = new Task(() => {
@@ -307,11 +344,6 @@ namespace LibTopoART
 				}
 
 				Task.WaitAll(_tasks);
-
-				foreach(var task in _tasks) {
-					if(task.Exception != null)
-						throw task.Exception;
-				}
 			}
 		}
 
@@ -327,12 +359,12 @@ namespace LibTopoART
 
 #if DEBUG
 	/// <summary>Class providing common functions and types.</summary>
-	public static class Common 
+	public static class Common
 #else
-	internal static class Common 
+	internal static class Common
 #endif
 	{
-		/// <summary>Instance variable <c>types</c> represents an array of possible integer and 
+		/// <summary>Instance variable <c>types</c> represents an array of possible integer and
 		/// floating point types.</summary>
 		public static readonly string[] Types = [
 			"sbyte", "byte", "short", "ushort", "int", "uint", "long", "ulong", "float", "double", "decimal"
@@ -465,35 +497,32 @@ namespace LibTopoART
 			return vecSimd;
 		}
 
-		internal static Vector<int>[]? CreateMaskVectorArray(bool[]? mask) {
-			Vector<int>[]? maskSimd;
+		internal static void FillMaskVectorArray(bool[] mask, int[] paddedMaskInt, Vector<int>[] maskSimd)
+		{
+			Debug.Assert(maskSimd.LongLength == SimdLength<int>(mask.LongLength));
+			Debug.Assert(paddedMaskInt.LongLength == maskSimd.LongLength * Vector<int>.Count);
 
-			if(mask != null) {
-				var maskInt = new int[mask.LongLength];
+			// create excitatory mask vector (-1 == 0xffffffff)
+			for(long i = 0; i < mask.LongLength; ++i)
+				paddedMaskInt[i] = mask[i] ? 0 : -1;
 
-				// create excitatory mask vector (-1 == 0xffffffff)
-				for(long i = 0; i < mask.LongLength; ++i)
-					maskInt[i] = mask[i] ? 0 : -1;
-				maskSimd = CreateVectorArray(maskInt);
-			} else
-				maskSimd = null;
-
-			return maskSimd;
+			for(long i = 0, j = 0; j < maskSimd.LongLength; i += Vector<int>.Count, ++j)
+				maskSimd[j] = new Vector<int>(paddedMaskInt, (int)i);
 		}
 
-		internal static Vector<int>[] CreateMaskVectorArray(long iLen, long dLen, bool[] m_i_vec) 
+		internal static void FillMaskVectorArray(long iLen, long dLen, bool[] m_i_vec, int[] paddedMaskInt, Vector<int>[] maskSimd)
 		{
-			var mask = new int[iLen + dLen];
+			Debug.Assert(maskSimd.LongLength == SimdLength<int>(iLen + dLen));
+			Debug.Assert(paddedMaskInt.LongLength == maskSimd.LongLength * Vector<int>.Count);
 
 			// create excitatory mask vector (-1 == 0xffffffff)
 			for(long i = 0; i < iLen; ++i)
-				mask[i] = m_i_vec[i] ? 0 : -1;
+				paddedMaskInt[i] = m_i_vec[i] ? 0 : -1;
 			for(long i = 0; i < dLen; ++i)
-				mask[i + iLen] = 0;
+				paddedMaskInt[i + iLen] = 0;
 
-			var maskSimd = CreateVectorArray(mask);
-
-			return maskSimd;
+			for(long i = 0, j = 0; j < maskSimd.LongLength; i += Vector<int>.Count, ++j)
+				maskSimd[j] = new Vector<int>(paddedMaskInt, (int)i);
 		}
 
 		internal static Vector<TType>[] CreateVectorArray<TType>(TType[] arr) where TType : struct
@@ -535,7 +564,7 @@ namespace LibTopoART
 				return null;
 
 			List<CategoryInfo> list = new List<CategoryInfo>((int)nodeNum);
-			
+
 			for(var currentNode = nodes; currentNode != null; currentNode = currentNode.Next)
 				list.Add(new CategoryInfo(currentNode.GetCopyOfSpatialWeights(), currentNode.GetCopyOfTemporalWeights(),
 					currentNode.ClusterID, currentNode.ClassID));
@@ -553,9 +582,9 @@ namespace LibTopoART
 			//allow for separated match functions for i and d
 			//attention: in the original algorithm realised by index sets
 			trainMask = new bool[iLen + dLen];
-			for(long i = 0; i < iLen; ++i) 
+			for(long i = 0; i < iLen; ++i)
 				trainMask[i] = false;
-			for(long i = 0; i < dLen; ++i) 
+			for(long i = 0; i < dLen; ++i)
 				trainMask[i + iLen] = true;
 
 			default_m_i_vec = new bool[iLen];
@@ -569,9 +598,9 @@ namespace LibTopoART
 			//attention: in the original algorithm realised by index sets
 			// excitatory mask vector (-1 == 0xffffffff)
 			trainMask = new int[iLen + dLen];
-			for(long i = 0; i < iLen; ++i) 
+			for(long i = 0; i < iLen; ++i)
 				trainMask[i] = -1;
-			for(long i = 0; i < dLen; ++i) 
+			for(long i = 0; i < dLen; ++i)
 				trainMask[i + iLen] = 0;
 
 			// excitatory mask vector (-1 == 0xffffffff)
@@ -589,11 +618,17 @@ namespace LibTopoART
 			return LoadBinaryHeader(reader, null);
 		}
 
+		public static HeaderInfo LoadBinaryHeader(Stream stream)
+		{
+			using var reader = new BinaryReader(stream, Encoding.UTF8, true);
+			return LoadBinaryHeader(reader, null);
+		}
+
 		public static HeaderInfo LoadBinaryHeader(BinaryReader reader, NetworkType networkType,
 			string networkName, in decimal referenceFileFormatVersion, TypeIndex integerType,
 			TypeIndex floatType)
 		{
-			return LoadBinaryHeader(reader, networkType, networkName, new FileFormatVersions(referenceFileFormatVersion), 
+			return LoadBinaryHeader(reader, networkType, networkName, new FileFormatVersions(referenceFileFormatVersion),
 									integerType, floatType);
 		}
 
@@ -614,7 +649,7 @@ namespace LibTopoART
 					break;
 				case 2:
 						Message(string.Format(CultureInfo.InvariantCulture,
-												"Initialise {0} network from file (version = {1:N2}; file format version = {2:N2}; TopoART file format version = {3:N2})", 
+												"Initialise {0} network from file (version = {1:N2}; file format version = {2:N2}; TopoART file format version = {3:N2})",
 												networkName, info.Version, info.FileFormatVersions.FileFormatVersion, info.FileFormatVersions.TopoARTFileFormatVersion));
 						if(info.FileFormatVersions.FileFormatVersion != referenceFileFormatVersions.FileFormatVersion)
 							Warning("File format version does not match");
@@ -717,6 +752,19 @@ namespace LibTopoART
 				long nTmp = n - nEnc;
 				return ((nTmp / Vector<TType>.Count) + SimdLength<TType>(nEnc), (int)(nTmp % Vector<TType>.Count));
 			}
+		}
+
+		[MethodImpl(MethodImplOptions.AggressiveInlining)]
+		internal static long HorizontalSum(Vector<long> v)
+		{
+#if NET6_0_OR_GREATER
+			return Vector.Sum(v);
+#else
+			long sum = 0;
+			for(var j = 0; j < Vector<long>.Count; ++j)
+				sum += v[j];
+			return sum;
+#endif
 		}
 
 		internal static void Message(string message, VerbosityLevel verbosity = VerbosityLevel.Normal)

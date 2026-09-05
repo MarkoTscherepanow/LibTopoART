@@ -2,7 +2,7 @@
 *                                              Hypersphere TopoART-C class                                             *
 *                                    created by Marko Tscherepanow, 8 November 2017                                    *
 ************************************************************************************************************************
-*                            $Id: Hypersphere_TopoART_C.cs 1680 2025-11-15 17:23:15Z marko $                           *
+*                            $Id: Hypersphere_TopoART_C.cs 1844 2026-08-15 13:44:32Z marko $                           *
 ***********************************************************************************************************************/
 
 using System;
@@ -21,7 +21,7 @@ namespace LibTopoART
 	/// network. Hypersphere TopoART-C is a combination of Hypersphere TopoART as proposed in "Marko Tscherepanow
 	/// (2012). Incremental On-line Clustering with a Topology-Learning Hierarchical ART Neural Network Using
 	/// Hyperspherical Categories. In Poster and Industry Proceedings of the Industrial Conference on Data Mining
-	/// (ICDM), pp. 22–34. Fockendorf, Germany: ibai-publishing." and TopoART-C as proposed in "Marko Tscherepanow and 
+	/// (ICDM), pp. 22–34. Fockendorf, Germany: ibai-publishing." and TopoART-C as proposed in "Marko Tscherepanow and
 	/// Sören Riechers (2012). An Incremental On-line Classifier for Imbalanced, Incomplete, and Noisy Data. In
 	/// Proceedings of the European Conference on Artificial Intelligence (ECAI), Workshop on Active and Incremental
 	/// Learning (AIL), pp. 18-23. Montpellier, France."
@@ -36,7 +36,7 @@ namespace LibTopoART
 		private const long UNDEFINED = LibTopoART_info.UNDEFINED;
 
 		/// <summary>Instance variable <c>UNDEFINED_CLASS_ID</c> gives the value used for indicating that an input
-		/// sample was predict to belong to the undefined class; i.e, no class ID was provided for such input samples
+		/// sample was predicted to belong to the undefined class; i.e., no class ID was provided for such input samples
 		/// during training.</summary>
 		public const long UNDEFINED_CLASS_ID = -2;
 
@@ -85,7 +85,7 @@ namespace LibTopoART
 		/// <param name="inputLen">The length of input vectors to be learnt.</param>
 		/// <param name="moduleNum">The number of Hypersphere TopoART-C modules.</param>
 		/// <param name="rho_a">The vigilance parameter of the first Hypersphere TopoART-C module (HTA-C a).</param>
-		public Hypersphere_TopoART_C(long inputLen, long moduleNum, decimal rho_a) : 
+		public Hypersphere_TopoART_C(long inputLen, long moduleNum, decimal rho_a) :
 			this(inputLen, moduleNum, rho_a, (decimal)Math.Sqrt(inputLen) / 2.0m) {}
 
 		/// <summary>This constructor initialises a Hypersphere TopoART-C network.</summary>
@@ -105,19 +105,33 @@ namespace LibTopoART
 
 			Common.Message($"R set to {this.R:0.##########}");
 
-			InitModules(inputLen + 1, CreateTopoARTModule, null);
+			InitModules(inputLen + 1, CreateHypersphereTopoARTModule, null);
 		}
 
 		/// <summary>This constructor loads a saved Hypersphere TopoART-C network.</summary>
 		/// <param name="path">The path of a binary Hypersphere TopoART-C file.</param>
-		/// <exception cref="InvalidFileException">Throws when the given file cannot be loaded.</exception>
+		/// <exception cref="InvalidFileException">Thrown when the given file cannot be loaded.</exception>
 		public Hypersphere_TopoART_C(string path)
 		{
-			using var file = File.Open(path, FileMode.Open, FileAccess.Read, FileShare.Read); 
+			using var file = File.Open(path, FileMode.Open, FileAccess.Read, FileShare.Read);
+			LoadNetwork(file);
+		}
 
-			var fileFormatVersions = LoadTopoARTParams(file, null, out var outerReader);
-			InitModules(outerReader, fileFormatVersions, LoadTopoARTModule, null, (BinaryReader reader, 
-				in (FileFormatVersions localFileFormatVersions, bool) localFileFormatInfo) => 
+		/// <summary>This constructor loads a saved Hypersphere TopoART-C network from a stream. The stream is left
+		/// open.</summary>
+		/// <param name="stream">A readable <c>Stream</c> containing a network in the binary Hypersphere TopoART-C file
+		/// format.</param>
+		/// <exception cref="InvalidFileException">Thrown when the given stream cannot be loaded.</exception>
+		public Hypersphere_TopoART_C(Stream stream)
+		{
+			LoadNetwork(stream);
+		}
+
+		private void LoadNetwork(Stream stream)
+		{
+			using var outerReader = LoadTopoARTParams(stream, null, out var fileFormatVersions);
+			InitModules(outerReader, fileFormatVersions, LoadHypersphereTopoARTModule, null, (BinaryReader reader,
+				in (FileFormatVersions localFileFormatVersions, bool) localFileFormatInfo) =>
 					new HTAC_F2_node(reader, localFileFormatInfo.localFileFormatVersions, R));
 		}
 
@@ -135,7 +149,7 @@ namespace LibTopoART
 		/// <param name="input">The input vector to be learnt.</param>
 		/// <param name="classID">The class ID corresponding to <paramref name="input"/>. (must be equal to or larger
 		/// than 0)</param>
-		/// <exception cref="InvalidClassIDException">Throws when <paramref name="classID"/> is less than 0.</exception>
+		/// <exception cref="InvalidClassIDException">Thrown when <paramref name="classID"/> is less than 0.</exception>
 		public void Learn(decimal[] input, long classID)
 		{
 			if(classID < 0)
@@ -146,7 +160,7 @@ namespace LibTopoART
 
 		private void LearnInternal(decimal[] input, long classID)
 		{
-			CreateF2Node<TA_F2_node, decimal, long> createFunction = 
+			CreateF2Node<TA_F2_node, decimal, long> createFunction =
 				(nodeID, inputLen, spatialWeights, temporalWeights) =>
 				{
 					Debug.Assert(temporalWeights == null);
@@ -155,7 +169,7 @@ namespace LibTopoART
 
 			Debug.Assert(_modules != null);
 
-			MatchFunction<TA_F2_node, decimal> matchFunction = (node, rho) => 
+			MatchFunction<TA_F2_node, decimal> matchFunction = (node, rho) =>
 				(node.MatchValue >= rho) && (((HTAC_F2_node)node).ClassID == classID);
 
 			LearnWithMask(input, null, createFunction, matchFunction);
@@ -185,7 +199,7 @@ namespace LibTopoART
 		/// <summary>This method predicts the class ID using the default value of nu.</summary>
 		/// <param name="input">The input vector the class ID of which is to be predicted.</param>
 		/// <param name="mask">The mask vector corresponding to <paramref name="input"/>.</param>
-		/// <returns> An object of type <c>TopoART_C_prediction</c> containing the predicted class ID and a
+		/// <returns>An object of type <c>TopoART_C_prediction</c> containing the predicted class ID and a
 		/// corresponding confidence value.</returns>
 		public TopoART_C_prediction Predict(decimal[] input, bool[]? mask)
 		{
@@ -197,13 +211,13 @@ namespace LibTopoART
 		/// <param name="mask">The mask vector corresponding to <paramref name="input"/>.</param>
 		/// <param name="nu">The maximum cardinality of the set of enclosing categories E and the neighbourhood set N.
 		/// (This parameter does not modify the network. It may be arbitrarily changed in each prediction step.)</param>
-		/// <returns> An object of type <c>TopoART_C_prediction</c> containing the predicted class ID and a
+		/// <returns>An object of type <c>TopoART_C_prediction</c> containing the predicted class ID and a
 		/// corresponding confidence value.</returns>
 		public TopoART_C_prediction Predict(decimal[] input, bool[]? mask, long nu)
 		{
 			lock(_learningLock) {
 				CompleteLearningQueue();
-				
+
 				decimal[] x_F1;
 				var classID = UNDEFINED;
 				var confidence = 1.0m;
@@ -216,7 +230,7 @@ namespace LibTopoART
 				Debug.Assert(_x_F0 != null);
 
 				if(_modules![ModuleNum - 1]._nodeNum >= 1) {		// net not empty
-					if(nu == 0) {
+					if(nu < 1) {
 						nu = 1;
 						Common.Warning("Invalid value for nu, changed to " + nu);
 					}
@@ -225,11 +239,11 @@ namespace LibTopoART
 						_x_F0![i] = input[i];
 
 					x_F1 = EncodeCurrentInput();
-					
+
 					if(_modules![ModuleNum - 1].ComputeAlternativeChoiceFunctionsWithMaskAndNu(
 						x_F1, mask, nu, out Stack<TA_F2_node> enclosingNodes, out List<TA_F2_node> neighbouringNodes)) {
 						if(enclosingNodes.Count > 0) {
-							var minCategorySize = _x_F0_len + 0.0001m;
+							var minCategorySize = R + 0.0001m;
 							long enclosingNodesCount = 0;
 							do									// add at least one node
 							{
@@ -252,26 +266,41 @@ namespace LibTopoART
 								invSum += y_F2[i];
 							}
 
-							var discriminationFunction = new SortedDictionary<long, decimal>();
+							// discrimination function: per-class sums in two small parallel buffers
+							var classIDs = new long[neighbouringNodes.Count];
+							var classSums = new decimal[neighbouringNodes.Count];
+							var classNum = 0;
 
 							for(long i = 0; i < neighbouringNodes.Count; ++i) {
 								y_F2[i] /= invSum;
-								if(discriminationFunction.ContainsKey(((HTAC_F2_node)neighbouringNodes[(int)i]).ClassID))
-									discriminationFunction[((HTAC_F2_node)neighbouringNodes[(int)i]).ClassID] += y_F2[i];
-								else
-									discriminationFunction.Add(((HTAC_F2_node)neighbouringNodes[(int)i]).ClassID, y_F2[i]); 
+
+								var currentClassID = ((HTAC_F2_node)neighbouringNodes[(int)i]).ClassID;
+								var found = false;
+								for(var j = 0; j < classNum; ++j) {
+									if(classIDs[j] == currentClassID) {
+										classSums[j] += y_F2[i];
+										found = true;
+										break;
+									}
+								}
+								if(!found) {
+									classIDs[classNum] = currentClassID;
+									classSums[classNum] = y_F2[i];
+									++classNum;
+								}
 							}
 
 							confidence = neighbouringNodes[0].Activation;
 
 							var maxDiscriminationValue = 0.0m;
-							foreach(KeyValuePair<long, decimal> pair in discriminationFunction) {
-								if(pair.Value > maxDiscriminationValue) {
-									maxDiscriminationValue = pair.Value;
-									classID = pair.Key;
+							for(var j = 0; j < classNum; ++j) {
+								if((classSums[j] > maxDiscriminationValue) ||
+								   ((classSums[j] == maxDiscriminationValue) && (classIDs[j] < classID))) {
+									maxDiscriminationValue = classSums[j];
+									classID = classIDs[j];
 								}
 							}
-						} 
+						}
 					}
 				}
 

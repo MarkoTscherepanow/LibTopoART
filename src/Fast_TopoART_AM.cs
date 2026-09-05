@@ -2,7 +2,7 @@
 *                                                   TopoART-AM class                                                   *
 *                                     created by Marko Tscherepanow, 17 March 2018                                     *
 ************************************************************************************************************************
-*                               $Id: Fast_TopoART_AM.cs 1680 2025-11-15 17:23:15Z marko $                              *
+*                               $Id: Fast_TopoART_AM.cs 1832 2026-07-17 06:24:27Z marko $                              *
 ***********************************************************************************************************************/
 
 using System;
@@ -21,7 +21,7 @@ namespace LibTopoART
 	/// "Marko Tscherepanow, Marco Kortkamp and Marc Kammer (2011). A Hierarchical ART Network for the Stable
 	/// Incremental Learning of Topological Structures and Associations from Noisy Data. Neural Networks 24(8): 906-916.
 	/// Elsevier."
-	/// <para>Class <c>TopoART_AM</c> requires all input and output to lie in the interval [0, 1].</para>
+	/// <para>Class <c>Fast_TopoART_AM</c> requires all input and output to lie in the interval [0, 1].</para>
 	/// </summary>
 	public class Fast_TopoART_AM : Fast_TopoART, IFast_TopoART_AM
 	{
@@ -43,7 +43,7 @@ namespace LibTopoART
 //----------------------------------------------------------------------------------------------------------------------
 
 		/// <summary>Property <c>FileFormatVersion</c> returns the version of the file format used by class
-		/// <c>TopoART_AM</c>.</summary>
+		/// <c>Fast_TopoART_AM</c>.</summary>
 		public new decimal FileFormatVersion { get => Common.TopoART_AM_file_format_version; }
 
 		/// <summary>Property <c>Key1Len</c> returns the length of the first key vector.</summary>
@@ -82,7 +82,6 @@ namespace LibTopoART
 			if(Key1Len != key1Len)
 				Common.Warning("Invalid length of key 1, changed to " + Key1Len);
 
-			Key2Len = CheckLength(key2Len);
 			if(Key2Len != key2Len)
 				Common.Warning("Invalid length of key 2, changed to " + Key2Len);
 
@@ -93,18 +92,30 @@ namespace LibTopoART
 
 		/// <summary>This constructor loads a saved TopoART-AM network.</summary>
 		/// <param name="path">The path of a binary TopoART-AM file.</param>
-		/// <exception cref="InvalidFileException">Throws when the given file cannot be loaded.</exception>
+		/// <exception cref="InvalidFileException">Thrown when the given file cannot be loaded.</exception>
 		public Fast_TopoART_AM(string path)
 		{
-			Debugger.Break();
-			using(var file = File.Open(path, FileMode.Open, FileAccess.Read, FileShare.Read)) 
-			{
-				var headerInfo = LoadTopoARTParams(file, TopoARTMatchFunction, out var reader);
-				InitModules(reader, headerInfo, LoadTopoARTAMModule, CreateTopoARTF2Node, LoadTopoARTF2Node);
-				reader.Dispose();
-			}
+			using(var file = File.Open(path, FileMode.Open, FileAccess.Read, FileShare.Read))
+				LoadNetwork(file);
 
 			InitTransientMembers();
+		}
+
+		/// <summary>This constructor loads a saved TopoART-AM network from a stream. The stream is left open.
+		/// </summary>
+		/// <param name="stream">A readable <c>Stream</c> containing a network in the binary TopoART-AM file format.
+		/// </param>
+		/// <exception cref="InvalidFileException">Thrown when the given stream cannot be loaded.</exception>
+		public Fast_TopoART_AM(Stream stream)
+		{
+			LoadNetwork(stream);
+			InitTransientMembers();
+		}
+
+		private void LoadNetwork(Stream stream)
+		{
+			using var reader = LoadTopoARTParams(stream, TopoARTMatchFunction, out var headerInfo);
+			InitModules(reader, headerInfo, LoadTopoARTAMModule, CreateTopoARTF2Node, LoadTopoARTF2Node);
 		}
 
 		private void InitTransientMembers()
@@ -184,7 +195,7 @@ namespace LibTopoART
 		/// <summary>This method performs a single training step.</summary>
 		/// <param name="key1">The first key vector to be learnt. The elements of the key vector are internally scaled
 		/// from [0, 255] to [0, 1].</param>
-		/// <param name="key2">The second key vector corresponding to <paramref name="key1"/>. The elements of the key 
+		/// <param name="key2">The second key vector corresponding to <paramref name="key1"/>. The elements of the key
 		/// vector are internally scaled from [0, 255] to [0, 1].</param>
 		public void Learn(decimal[] key1, decimal[] key2)
 		{
@@ -201,7 +212,7 @@ namespace LibTopoART
 
 		private protected override HeaderInfo LoadBinaryHeader(BinaryReader reader)
 		{
-			return Common.LoadBinaryHeader(reader, _networkType, _networkName, new FileFormatVersions(FileFormatVersion, TopoARTFileFormatVersion), 
+			return Common.LoadBinaryHeader(reader, _networkType, _networkName, new FileFormatVersions(FileFormatVersion, TopoARTFileFormatVersion),
 				integerType, floatType);
 		}
 
@@ -265,7 +276,7 @@ namespace LibTopoART
 		/// <param name="moduleIndex">Index of the TopoART-AM module to be used for recall. (<c>FINAL_MODULE</c> denotes
 		/// the module with the highest index.)</param>
 		/// <returns>The number of F3 nodes created.</returns>
-		/// <exception cref="InvalidModuleIndexException">Throws when
+		/// <exception cref="InvalidModuleIndexException">Thrown when
 		/// <paramref name="moduleIndex"/> is invalid.</exception>
 		public long BeginRecallKey1(byte[] key2, long moduleIndex = FINAL_MODULE)
 		{
@@ -283,7 +294,7 @@ namespace LibTopoART
 
 			lock(_learningLock) {
 				CompleteLearningQueue();
-				return ((Fast_TopoART_AM_module)_modules![_recallModuleIndex]).BeginRecall(_x_F1_simd!, _recallMask1Simd!, Phis[_recallModuleIndex]);
+				return ((Fast_TopoART_AM_module)_modules![_recallModuleIndex]).BeginRecall(_x_F1_simd!, _recallMask1Simd!, _phis![_recallModuleIndex]);
 			}
 		}
 
@@ -292,7 +303,7 @@ namespace LibTopoART
 		/// <param name="moduleIndex">Index of the TopoART-AM module to be used for recall. (<c>FINAL_MODULE</c> denotes
 		/// the module with the highest index.)</param>
 		/// <returns>The number of F3 nodes created.</returns>
-		/// <exception cref="InvalidModuleIndexException">Throws when
+		/// <exception cref="InvalidModuleIndexException">Thrown when
 		/// <paramref name="moduleIndex"/> is invalid.</exception>
 		public long BeginRecallKey1(decimal[] key2, long moduleIndex = FINAL_MODULE)
 		{
@@ -309,7 +320,7 @@ namespace LibTopoART
 
 			lock(_learningLock) {
 				CompleteLearningQueue();
-				return ((Fast_TopoART_AM_module)_modules![_recallModuleIndex]).BeginRecall(_x_F1_simd!, _recallMask1Simd!, Phis[_recallModuleIndex]);
+				return ((Fast_TopoART_AM_module)_modules![_recallModuleIndex]).BeginRecall(_x_F1_simd!, _recallMask1Simd!, _phis![_recallModuleIndex]);
 			}
 		}
 
@@ -319,7 +330,7 @@ namespace LibTopoART
 		/// <param name="moduleIndex">Index of the TopoART-AM module to be used for recall. (<c>FINAL_MODULE</c> denotes
 		/// the module with the highest index.)</param>
 		/// <returns>The number of F3 nodes created.</returns>
-		/// <exception cref="InvalidModuleIndexException">Throws when
+		/// <exception cref="InvalidModuleIndexException">Thrown when
 		/// <paramref name="moduleIndex"/> is invalid.</exception>
 		public long BeginRecallKey2(byte[] key1, long moduleIndex = FINAL_MODULE)
 		{
@@ -337,7 +348,7 @@ namespace LibTopoART
 
 			lock(_learningLock) {
 				CompleteLearningQueue();
-				return ((Fast_TopoART_AM_module)_modules![_recallModuleIndex]).BeginRecall(_x_F1_simd!, _recallMask2Simd!, Phis[_recallModuleIndex]);
+				return ((Fast_TopoART_AM_module)_modules![_recallModuleIndex]).BeginRecall(_x_F1_simd!, _recallMask2Simd!, _phis![_recallModuleIndex]);
 			}
 		}
 
@@ -346,7 +357,7 @@ namespace LibTopoART
 		/// <param name="moduleIndex">Index of the TopoART-AM module to be used for recall. (<c>FINAL_MODULE</c> denotes
 		/// the module with the highest index.)</param>
 		/// <returns>The number of F3 nodes created.</returns>
-		/// <exception cref="InvalidModuleIndexException">Throws when
+		/// <exception cref="InvalidModuleIndexException">Thrown when
 		/// <paramref name="moduleIndex"/> is invalid.</exception>
 		public long BeginRecallKey2(decimal[] key1, long moduleIndex = FINAL_MODULE)
 		{
@@ -364,7 +375,7 @@ namespace LibTopoART
 
 			lock(_learningLock) {
 				CompleteLearningQueue();
-				return ((Fast_TopoART_AM_module)_modules![_recallModuleIndex]).BeginRecall(_x_F1_simd!, _recallMask2Simd!, Phis[_recallModuleIndex]);
+				return ((Fast_TopoART_AM_module)_modules![_recallModuleIndex]).BeginRecall(_x_F1_simd!, _recallMask2Simd!, _phis![_recallModuleIndex]);
 			}
 		}
 

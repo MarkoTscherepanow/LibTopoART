@@ -9,7 +9,7 @@ namespace LibTopoART
 
 //**********************************************************************************************************************
 
-	internal sealed class Fast_Episodic_TopoART_module : Fast_TopoART_module 
+	internal sealed class Fast_Episodic_TopoART_module : Fast_TopoART_module
 	{
 		private long[]? _t_F1;
 
@@ -22,7 +22,7 @@ namespace LibTopoART
 
 //----------------------------------------------------------------------------------------------------------------------
 
-		public Fast_Episodic_TopoART_module(long inputLen, int rho, 
+		public Fast_Episodic_TopoART_module(long inputLen, int rho,
 			CreateF2Node<FTA_F2_node, Vector<int>, long>? F2_node_create_func)
 			: base(inputLen, rho, F2_node_create_func)
 		{
@@ -49,7 +49,7 @@ namespace LibTopoART
 
 //----------------------------------------------------------------------------------------------------------------------
 
-		public LearningResult LearnWithMask(Vector<int>[] x_F1_vec, long[] t_F1_vec, 
+		public LearningResult LearnWithMask(Vector<int>[] x_F1_vec, long[] t_F1_vec,
 			MatchFunction<FTA_F2_node, long>? matchFunction, int alpha, int beta_sbm, long phi,
 			bool skipEdgeLearning)
 		{
@@ -115,10 +115,10 @@ namespace LibTopoART
 			}
 
 finish:
-			if(bmNode == null) 
+			if(bmNode == null)
 				return LearningResult.DoNotPropagate;
 
-			if(bmNode.IsNodeCandidate(phi)) 
+			if(bmNode.IsNodeCandidate(phi))
 				return LearningResult.DoNotPropagate;
 
 			return LearningResult.PropagateFurther;
@@ -146,7 +146,7 @@ finish:
 
 //----------------------------------------------------------------------------------------------------------------------
 
-		private protected override void LoadPrecedingBinaryInformation(BinaryReader reader, 
+		private protected override void LoadPrecedingBinaryInformation(BinaryReader reader,
 			  (FileFormatVersions fileFormatVersions, bool compatibilityMode) fileFormatInfo)
 		{
 			base.LoadPrecedingBinaryInformation(reader, fileFormatInfo);
@@ -235,7 +235,7 @@ finish:
 				ResetRecallMembers();
 
 			return F3_node_num;
-		} 
+		}
 
 #if DEBUG
 		/// <summary>This method performs a single inter-episode recall step and sets the starting point for
@@ -272,7 +272,7 @@ finish:
 		{
 			bool result;
 
-			if((_F3_nodes != null) && (_interRecallCount != 0)) 
+			if((_F3_nodes != null) && (_interRecallCount != 0))
 				_F3_nodes = _F3_nodes._next;
 
 			if(_F3_nodes != null) {
@@ -348,10 +348,7 @@ finish:
 				if((_active_F2_node != null) && (_interRecallCount != 0)) {
 					_active_F2_node.GetConnectedNodeIDs(out var size, out var connectedNodeIDs);
 					for(long i = 0; i < size; ++i) {
-						FTA_F2_node? currentNode;
-						try {
-							currentNode = _F2_nodes_dictionary[connectedNodeIDs![i]];
-						} catch {
+						if(!_F2_nodes_dictionary.TryGetValue(connectedNodeIDs![i], out var currentNode)) {
 							Debug.WriteLine("Incorrect F2 node searched during intra-episode recall");
 							continue;
 						}
@@ -361,7 +358,7 @@ finish:
 						if(currentTemporalDist > bmTemporalDist) {
 							bmNode = currentNode;
 							bmTemporalDist = currentTemporalDist;
-						} 
+						}
 					}
 				}
 			}

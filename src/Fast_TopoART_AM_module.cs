@@ -8,7 +8,7 @@ namespace LibTopoART
 
 //**********************************************************************************************************************
 
-	internal sealed class Fast_TopoART_AM_module : Fast_TopoART_module 
+	internal sealed class Fast_TopoART_AM_module : Fast_TopoART_module
 	{
 		private F3_node? _F3_nodes;
 		private FTA_F2_node? _active_F2_node;
@@ -73,7 +73,7 @@ namespace LibTopoART
 				ResetRecallMembers();
 
 			return F3_node_num;
-		} 
+		}
 
 #if DEBUG
 		/// <summary>This method performs a single associative recall step.</summary>
@@ -108,7 +108,7 @@ namespace LibTopoART
 		{
 			bool result;
 
-			if((_F3_nodes != null) && (_recallCount != 0)) 
+			if((_F3_nodes != null) && (_recallCount != 0))
 				_F3_nodes = _F3_nodes._next;
 
 			if(_F3_nodes != null) {

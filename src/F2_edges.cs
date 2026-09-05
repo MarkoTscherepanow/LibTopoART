@@ -73,7 +73,7 @@ namespace LibTopoART
 		public bool AddEdgeTo(long connectedNodeID)
 		{
 			if(!ExistsEdgeTo(connectedNodeID)) {
-				if(EdgeNum >= _capacity) 
+				if(EdgeNum >= _capacity)
 					Grow();
 				_connectedNodeIDs![EdgeNum] = connectedNodeID;
 				++EdgeNum;
@@ -86,7 +86,7 @@ namespace LibTopoART
 		public bool ExistsEdgeTo(long connectedNodeID)
 		{
 			if(_connectedNodeIDs != null) {
-				for(long i = EdgeNum - 1; i >= 0; --i) 
+				for(long i = EdgeNum - 1; i >= 0; --i)
 					if(_connectedNodeIDs[i] == connectedNodeID)
 						return true;
 			}
@@ -113,7 +113,7 @@ namespace LibTopoART
 		public bool RemoveEdgeTo(long connectedNodeID)
 		{
 			if(_connectedNodeIDs != null) {
-				for(long i = EdgeNum - 1; i >= 0; --i) 
+				for(long i = EdgeNum - 1; i >= 0; --i)
 					if(_connectedNodeIDs[i] == connectedNodeID) {
 						for(long j = i + 1; j < EdgeNum; ++j)
 							_connectedNodeIDs[j - 1] = _connectedNodeIDs[j];
@@ -135,7 +135,7 @@ namespace LibTopoART
 						writer.Write(StartingNodeID);
 						writer.Write(_connectedNodeIDs[i]);
 					}
-				} else 
+				} else
 #endif
 					if(TopoART_file_format_version >= 0.10m) {
 						for(var i = EdgeNum - 1; i >= 0; --i)
@@ -151,7 +151,7 @@ namespace LibTopoART
 				if(_connectedNodeIDs != null)
 					for(var i = EdgeNum - 1; i >= 0; --i)
 						writer.WriteLine(StartingNodeID + " -> " + _connectedNodeIDs[i]);
-			} else 
+			} else
 #endif
 				if(TopoART_file_format_version >= 0.10m) {
 					if(_connectedNodeIDs != null) {

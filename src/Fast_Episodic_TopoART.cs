@@ -2,7 +2,7 @@
 *                                                Episodic TopoART class                                                *
 *                                     created by Marko Tscherepanow, 4 August 2013                                     *
 ************************************************************************************************************************
-*                            $Id: Fast_Episodic_TopoART.cs 1680 2025-11-15 17:23:15Z marko $                           *
+*                            $Id: Fast_Episodic_TopoART.cs 1832 2026-07-17 06:24:27Z marko $                           *
 ***********************************************************************************************************************/
 
 using System.IO;
@@ -49,7 +49,7 @@ namespace LibTopoART
 			return new Fast_Episodic_TopoART_module(reader, fileFormatInfo, F2_node_create_func, F2_node_load_func);
 		}
 
-		private FTA_F2_node CreateEpisodicTopoARTF2Node(long nodeID, long inputLen, Vector<int>[] spatialWeights, 
+		private FTA_F2_node CreateEpisodicTopoARTF2Node(long nodeID, long inputLen, Vector<int>[] spatialWeights,
 			long[]? temporalWeights)
 		{
 			Debug.Assert(temporalWeights != null);
@@ -64,7 +64,7 @@ namespace LibTopoART
 //----------------------------------------------------------------------------------------------------------------------
 
 		/// <value>Property <c>T_max</c> represents the maximum considered time frame.</value>
-		public long T_max 
+		public long T_max
 		{
 			get => _t_max / Common.ScalingFactor;
 		}
@@ -72,9 +72,9 @@ namespace LibTopoART
 //----------------------------------------------------------------------------------------------------------------------
 
 		/// <summary>This constructor initialises an Episodic TopoART network.</summary>
-		/// <param name="inputLen"> The length of input vectors to be learnt.</param>
-		/// <param name="moduleNum"> The number of Episodic TopoART modules.</param>
-		/// <param name="rho_a"> The vigilance parameter of the first Episodic TopoART module (ETA a).</param>
+		/// <param name="inputLen">The length of input vectors to be learnt.</param>
+		/// <param name="moduleNum">The number of Episodic TopoART modules.</param>
+		/// <param name="rho_a">The vigilance parameter of the first Episodic TopoART module (ETA a).</param>
 		/// <param name="t_max">The parameter limiting the considered time frame.</param>
 		public Fast_Episodic_TopoART(long inputLen, long moduleNum, decimal rho_a, long t_max)
 		{
@@ -82,7 +82,11 @@ namespace LibTopoART
 
 			if(t_max <= 0) {
 				this._t_max = 100 * Common.ScalingFactor;
-				Common.Warning("Invalid value for t_max, changed to " + this._t_max);
+				Common.Warning("Invalid value for t_max, changed to " + T_max);
+			}
+			else if(t_max > long.MaxValue / Common.ScalingFactor) {
+				this._t_max = (long.MaxValue / Common.ScalingFactor) * Common.ScalingFactor;
+				Common.Warning("Too large value for t_max, changed to " + T_max);
 			}
 			else
 				this._t_max = t_max * Common.ScalingFactor;
@@ -93,22 +97,35 @@ namespace LibTopoART
 		}
 
 		/// <summary>This constructor loads a saved Episodic TopoART network.</summary>
-		/// <param name="path"> The path of a binary Episodic TopoART file.</param>
-		/// <exception cref="InvalidFileException">Throws when the given file cannot be loaded.</exception>
+		/// <param name="path">The path of a binary Episodic TopoART file.</param>
+		/// <exception cref="InvalidFileException">Thrown when the given file cannot be loaded.</exception>
 		public Fast_Episodic_TopoART(string path)
 		{
 			using var file = File.Open(path, FileMode.Open, FileAccess.Read, FileShare.Read);
+			LoadNetwork(file);
+		}
 
-			var headerInfo = LoadTopoARTParams(file, TopoARTMatchFunction, out var reader);
+		/// <summary>This constructor loads a saved Episodic TopoART network from a stream. The stream is left open.
+		/// </summary>
+		/// <param name="stream">A readable <c>Stream</c> containing a network in the binary Episodic TopoART file
+		/// format.</param>
+		/// <exception cref="InvalidFileException">Thrown when the given stream cannot be loaded.</exception>
+		public Fast_Episodic_TopoART(Stream stream)
+		{
+			LoadNetwork(stream);
+		}
+
+		private void LoadNetwork(Stream stream)
+		{
+			using var reader = LoadTopoARTParams(stream, TopoARTMatchFunction, out var headerInfo);
 			InitModules(reader, headerInfo, LoadEpisodicTopoARTModule, CreateEpisodicTopoARTF2Node, LoadEpisodicTopoARTF2Node);
-			reader.Dispose();
 		}
 
 //----------------------------------------------------------------------------------------------------------------------
 
 		/// <summary>This method performs a single training step.
 		/// <para>The spatial weights are adapted as in the original TopoART network. In contrast, the adaptation of the
-		/// temporal weight <c>w_{j,2}^{F2,t}</c> occurring only in Episodic TopoART is slightly different: 
+		/// temporal weight <c>w_{j,2}^{F2,t}</c> occurring only in Episodic TopoART is slightly different:
 		/// <c>w_{j,2}^{F2,t}(t+1) = beta_j * Max(t_2^{F1}(t), w_{j,2}^{F2,t}(t) + (1 - beta_j) * w_{j,2}^{F2,t}(t)</c>
 		/// for <c>j = bm</c> or <c>j = sbm</c>. (Note: <c>w_{j,1}^{F2,t}</c> remains constant over the lifetime of a
 		/// node.)</para>
@@ -123,12 +140,12 @@ namespace LibTopoART
 
 		/// <summary>This method performs a single training step.
 		/// <para>The spatial weights are adapted as in the original TopoART network. In contrast, the adaptation of the
-		/// temporal weight <c>w_{j,2}^{F2,t}</c> occurring only in Episodic TopoART is slightly different: 
+		/// temporal weight <c>w_{j,2}^{F2,t}</c> occurring only in Episodic TopoART is slightly different:
 		/// <c>w_{j,2}^{F2,t}(t+1) = beta_j * Max(t_2^{F1}(t), w_{j,2}^{F2,t}(t) + (1 - beta_j) * w_{j,2}^{F2,t}(t)</c>
 		/// for <c>j = bm</c> or <c>j = sbm</c>. (Note: <c>w_{j,1}^{F2,t}</c> remains constant over the lifetime of a
 		/// node.)</para>
 		/// </summary>
-		/// <param name="input"> The input vector to be learnt.</param>
+		/// <param name="input">The input vector to be learnt.</param>
 		public override void Learn(decimal[] input)
 		{
 			EncodeCurrentInputSimd(input);
@@ -150,10 +167,10 @@ namespace LibTopoART
 			var lr = LearningResult.PropagateFurther;
 			Learn(ModuleNum, m => {
 					if(lr == LearningResult.PropagateFurther)
-						lr = ((Fast_Episodic_TopoART_module)_modules![m]).LearnWithMask(input, t_F1, TopoARTMatchFunction, _alpha, _beta_sbm, Phis[m], _skipEdgeLearning);
+						lr = ((Fast_Episodic_TopoART_module)_modules![m]).LearnWithMask(input, t_F1, TopoARTMatchFunction, _alpha, _beta_sbm, _phis![m], _skipEdgeLearning);
 
-					if((_modules![m].LearningCycles % Tau) == 0)
-						_modules![m].RemoveNodeCandidates(Phis[m]);
+					if((_modules![m].LearningCycles != 0) && ((_modules![m].LearningCycles % Tau) == 0))
+						_modules![m].RemoveNodeCandidates(_phis![m]);
 			});
 		}
 
@@ -236,7 +253,7 @@ namespace LibTopoART
 
 			lock(_learningLock) {
 				CompleteLearningQueue();
-				return ((Fast_Episodic_TopoART_module)_modules![ModuleNum - 1]).BeginRecall(_x_F1_simd!, Phis[ModuleNum - 1]);
+				return ((Fast_Episodic_TopoART_module)_modules![ModuleNum - 1]).BeginRecall(_x_F1_simd!, _phis![ModuleNum - 1]);
 			}
 		}
 
@@ -252,7 +269,7 @@ namespace LibTopoART
 
 			lock(_learningLock) {
 				CompleteLearningQueue();
-				return ((Fast_Episodic_TopoART_module)_modules![ModuleNum - 1]).BeginRecall(_x_F1_simd!, Phis[ModuleNum - 1]);
+				return ((Fast_Episodic_TopoART_module)_modules![ModuleNum - 1]).BeginRecall(_x_F1_simd!, _phis![ModuleNum - 1]);
 			}
 		}
 

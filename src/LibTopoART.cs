@@ -2,7 +2,7 @@
 *                                                      LibTopoART                                                      *
 *                                      created by Marko Tscherepanow, 12 June 2011                                     *
 ************************************************************************************************************************
-*                                 $Id: LibTopoART.cs 1681 2025-11-16 11:10:48Z marko $                                 *
+*                                 $Id: LibTopoART.cs 1840 2026-08-15 10:43:24Z marko $                                 *
 ***********************************************************************************************************************/
 
 using System;
@@ -63,7 +63,7 @@ namespace LibTopoART
 	public readonly struct LibTopoART_info
 	{
 		/// <summary>Instance variable <c>version</c> represents the version of LibTopoART.</summary>
-		public const decimal version = 1.00m;
+		public const decimal version = 1.01m;
 
 		/// <summary>Instance variable <c>networks</c> provides a string array containing the networks implemented in
 		/// the current version of LibTopoART and the corresponding class names.</summary>
@@ -94,7 +94,7 @@ namespace LibTopoART
 
 	/// <summary>Class <c>F2_output</c> provides the output of a single TopoART module. It is a compressed version of
 	/// the output vectors y and c.</summary>
-	public class F2_output  
+	public class F2_output
 	{
 		/// <summary>Instance variable <c>bm_node_activation</c> represents the activation of the best-matching node
 		/// (prediction variant).</summary>
@@ -141,12 +141,15 @@ namespace LibTopoART
 			this.confidence = confidence;
 		}
 	}
-	
+
 //**********************************************************************************************************************
 
 	/// <summary>Struct <c>TopoART_R_prediction</c> contains a prediction made by a TopoART-R network.</summary>
 	public readonly struct TopoART_R_prediction<TElementType> where TElementType : struct, IConvertible
 	{
+		private static readonly TElementType _noPrediction =
+			(typeof(TElementType) == typeof(decimal)) ? (TElementType)(object)(decimal)LibTopoART_info.UNDEFINED : default;
+
 		/// <summary>Instance variable <c>NO_PREDICTION</c> provides a default prediction for variables that are
 		/// presented to the network; i.e., these variables are known and no prediction is computed for them. ATTENTION:
 		/// <c>NO_PREDICTION</c> may be ambiguous depending on <c>TElementType</c>.</summary>
@@ -158,28 +161,42 @@ namespace LibTopoART
 		/// <summary>Instance variable <c>d_vec_prediction</c> provides the predictions for the dependent variables.
 		/// </summary>
 		public readonly TElementType[] d_vec_prediction;
-		
+
 		/// <summary>This constructor sets the instance variables <c>i_vec_prediction</c> and <c>d_vec_prediction</c> of
 		/// struct <c>TopoART_R_prediction</c>.</summary>
 		/// <param name="iVecPrediction">The prediction results for the independent variables to be set.</param>
 		/// <param name="dVecPrediction">The prediction results for the dependent variables to be set.</param>
 		public TopoART_R_prediction(TElementType[] iVecPrediction, TElementType[] dVecPrediction)
 		{
-			NO_PREDICTION = (typeof(TElementType) == typeof(decimal)) ? (TElementType)Convert.ChangeType(LibTopoART_info.UNDEFINED, typeof(TElementType)) : default;
+			NO_PREDICTION = _noPrediction;
 
 			i_vec_prediction = iVecPrediction;
 			d_vec_prediction = dVecPrediction;
 		}
-		
+
+		/// <summary>This constructor initialises the instance variables <c>i_vec_prediction</c> and
+		/// <c>d_vec_prediction</c> of struct <c>TopoART_R_prediction</c> with arrays of the given lengths in which all
+		/// elements are set to <c>NO_PREDICTION</c>.</summary>
+		/// <param name="iLen">The length of the input vector (independent variables).</param>
+		/// <param name="dLen">The length of the output vector (dependent variables).</param>
+		public TopoART_R_prediction(long iLen, long dLen)
+			: this(new TElementType[iLen], new TElementType[dLen])
+		{
+			for(long i = 0; i < iLen; ++i)
+				i_vec_prediction[i] = NO_PREDICTION;
+			for(long i = 0; i < dLen; ++i)
+				d_vec_prediction[i] = NO_PREDICTION;
+		}
+
 		/// <summary>This method prints the predictions on the console.</summary>
 		public void PrintPredictions() {
 			Console.Write("i_vec_prediction:");
-			foreach(TElementType prediction in i_vec_prediction) 
+			foreach(TElementType prediction in i_vec_prediction)
 				Console.Write($" {prediction}");
 			Console.Write("\n");
-			
+
 			Console.Write("d_vec_prediction:");
-			foreach(TElementType prediction in d_vec_prediction) 
+			foreach(TElementType prediction in d_vec_prediction)
 				Console.Write($" {prediction}");
 			Console.Write("\n");
 		}
