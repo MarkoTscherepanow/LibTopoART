@@ -15,7 +15,7 @@ namespace LibTopoART
 		ITopoART_module<int, Vector<int>, long, Vector<int>>,
 		IModuleAdaptationStateCheck<Vector<int>>
 	{
-		private const long _serialWorkLimit = 32768;
+		private const long _serialWorkLimit = 8192;
 
 		// per-node work offset (in SIMD-vector equivalents) accounting for element-count-independent costs
 		private const long _serialPerNodeWorkOffset = 8;

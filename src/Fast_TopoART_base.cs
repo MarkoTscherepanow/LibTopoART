@@ -13,7 +13,8 @@ namespace LibTopoART
 //**********************************************************************************************************************
 
 	/// <summary>Base class providing functionality common to several TopoART networks.</summary>
-	public abstract class Fast_TopoART_base : Network_base, IFast_TopoART, ITopoART_base_stream, ICategoryAccess, IDisposable
+	public abstract class Fast_TopoART_base : Network_base, IFast_TopoART, ITopoART_base_stream, ICategoryAccess,
+		IDisposable
 	{
 
 //----------------------------------------------------------------------------------------------------------------------
