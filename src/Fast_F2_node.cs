@@ -22,7 +22,6 @@ namespace LibTopoART
 		protected Vector<int>[] _weights;
 		protected int _matchValue;
 		private long _weightsSum = UNDEFINED;
-		private protected long _sizeCache = UNDEFINED;
 
 		internal FTA_F2_node? _next;
 
@@ -166,7 +165,7 @@ namespace LibTopoART
 			Console.Write("\n");
 		}
 
-		public void AdaptWeights(Vector<int>[] x_F1, int beta)
+		public virtual void AdaptWeights(Vector<int>[] x_F1, int beta)
 		{
 			var betaNeg = Common.ScalingFactor - beta;
 
@@ -202,7 +201,6 @@ namespace LibTopoART
 			}
 
 			_weightsSum = UNDEFINED;
-			_sizeCache = UNDEFINED;
 
 #if DEBUG
 			(i1, i2) = Common.SimdIndexes<int>(d - 1, d);
@@ -656,6 +654,7 @@ namespace LibTopoART
 	internal sealed class FTAC_F2_node : FTA_F2_node
 	{
 		private long _classID;
+		private long _sizeCache = LibTopoART_info.UNDEFINED;
 
 		public override long ClassID { get => _classID; }
 
@@ -702,6 +701,15 @@ namespace LibTopoART
 		protected override void LoadAdditionalData(BinaryReader reader, in (FileFormatVersions, bool) fileFormatInfo)
 		{
 			_classID = reader.ReadInt64();
+		}
+
+//----------------------------------------------------------------------------------------------------------------------
+
+		public override void AdaptWeights(Vector<int>[] x_F1, int beta)
+		{
+			base.AdaptWeights(x_F1, beta);
+
+			_sizeCache = LibTopoART_info.UNDEFINED;
 		}
 
 //----------------------------------------------------------------------------------------------------------------------

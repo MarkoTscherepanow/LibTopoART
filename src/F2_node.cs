@@ -20,7 +20,6 @@ namespace LibTopoART
 		private protected long _representedInputs;
 		private protected decimal[] _weights;
 		private protected decimal _weightsSum = UNDEFINED;
-		private protected decimal _sizeCache = UNDEFINED;
 
 		internal TA_F2_node? _next;
 
@@ -131,16 +130,13 @@ namespace LibTopoART
 					_weights[i] = Math.Min(x_F1[i], _weights[i]);
 
 				_weightsSum = UNDEFINED;
-				_sizeCache = UNDEFINED;
 			} else if(beta != 0.0m) {
 				var betaNeg = 1.0m - beta;
 
-				// reduce each result to its minimal scale without changing its value
 				for(long i = 0; i < _inputLen; ++i)
-					_weights[i] = (beta * (Math.Min(x_F1[i], _weights[i])) + betaNeg * _weights[i]) / 1.0000000000000000000000000000m;
+					_weights[i] = beta * (Math.Min(x_F1[i], _weights[i])) + betaNeg * _weights[i];
 
 				_weightsSum = UNDEFINED;
-				_sizeCache = UNDEFINED;
 			}
 		}
 
@@ -379,14 +375,12 @@ namespace LibTopoART
 			if(dist != 0.0m) {
 				var factor = beta / 2.0m * (1.0m - Math.Min(_weights[_inputLen - 1], dist) / dist);
 
-				// reduce each result to its minimal scale without changing its value
 				for(i = 0; i < _inputLen - 1; ++i)
-					_weights[i] = (_weights[i] + factor * (x_F1[i] - _weights[i])) / 1.0000000000000000000000000000m;
+					_weights[i] += factor * (x_F1[i] - _weights[i]);
 			}
 
 			// adapt radius
-			_weights[_inputLen - 1] = (_weights[_inputLen - 1] + beta / 2.0m * (Math.Max(_weights[_inputLen - 1], dist) - _weights[_inputLen - 1]))
-				/ 1.0000000000000000000000000000m;
+			_weights[_inputLen - 1] += beta / 2.0m * (Math.Max(_weights[_inputLen - 1], dist) - _weights[_inputLen - 1]);
 
 			++_representedInputs;
 		}
@@ -457,6 +451,7 @@ namespace LibTopoART
 	internal sealed class TAC_F2_node : TA_F2_node
 	{
 		private long _classID;
+		private decimal _sizeCache = LibTopoART_info.UNDEFINED;
 
 		public override long ClassID { get => _classID; }
 
@@ -494,6 +489,16 @@ namespace LibTopoART
 		private protected override void LoadAdditionalData(BinaryReader reader, in FileFormatVersions fileFormatVersions)
 		{
 			_classID = reader.ReadInt64();
+		}
+
+//----------------------------------------------------------------------------------------------------------------------
+
+		private protected override void AdaptWeightsInternal(decimal[] x_F1, decimal beta)
+		{
+			base.AdaptWeightsInternal(x_F1, beta);
+
+			if(beta != 0.0m)
+				_sizeCache = LibTopoART_info.UNDEFINED;
 		}
 
 //----------------------------------------------------------------------------------------------------------------------

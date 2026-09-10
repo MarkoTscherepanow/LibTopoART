@@ -14,7 +14,7 @@ namespace LibTopoART
 		ITopoART_module<decimal, decimal, long, bool>,
 		IModuleAdaptationStateCheck<decimal>
 	{
-		private const long _serialWorkLimit = 1024;
+		private const long _serialWorkLimit = 512;
 
 		// per-node work offset (in input-element equivalents) for the serial/parallel decision
 		private readonly long _serialPerNodeWorkOffset;

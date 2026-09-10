@@ -254,7 +254,7 @@ namespace LibTopoART
 //----------------------------------------------------------------------------------------------------------------------
 
 	/// <summary>Interface extending the basic TopoART functionality by stream-based saving.</summary>
-	public interface ITopoART_base_stream : ITopoART_base
+	public interface ITopoART_base_stream
 	{
 		/// <summary>This method saves the entire network as text to a writer. The writer is flushed but left open.
 		/// </summary>
